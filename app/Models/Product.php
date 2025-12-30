@@ -13,14 +13,14 @@ class Product extends Model
     // Security: Only allow these fields to be mass-assigned
     protected $fillable = [
         'name',
-        'description', // Optional
+        'description', 
         'sku',
         'price',
         'cost_price',
         'stock_quantity',
         'low_stock_threshold',
-        'category',
-        'image_path', // <--- MAKE SURE THIS IS HERE
+        'category_id', // <--- UPDATED: This now points to the ID, not a text string
+        'image_path', 
         'is_active',
     ];
 
@@ -30,6 +30,15 @@ class Product extends Model
         'stock_quantity' => 'integer',
         'price' => 'integer',
     ];
+
+    /**
+     * Relationship: A Product belongs to a Category
+     * This allows you to do: $product->category->name
+     */
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
 
     /**
      * SENIOR TIP: Accessor for "Display Price"

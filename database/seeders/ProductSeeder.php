@@ -2,62 +2,70 @@
 
 namespace Database\Seeders;
 
-use App\Models\Product;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+use App\Models\Category; // Import the Category model
 
 class ProductSeeder extends Seeder
 {
     public function run(): void
     {
-        // 1. Create a few specific items for testing
-        $products = [
+        // 1. Helper to get ID (or create if missing)
+        $getCatId = function ($name) {
+            return Category::firstOrCreate(['name' => $name])->id;
+        };
+
+        DB::table('products')->insert([
             [
                 'name' => 'Espresso Shot',
-                'sku' => 'BEV-001',
+                'sku'  => 'BEV-001',
                 'price' => 250, // $2.50
                 'stock_quantity' => 100,
-                'category' => 'Beverages',
-            ],
-            [
-                'name' => 'Vanilla Latte',
-                'sku' => 'BEV-002',
-                'price' => 450, // $4.50
-                'stock_quantity' => 50,
-                'category' => 'Beverages',
+                'category_id' => $getCatId('Beverages'), // <--- UPDATED
+                'created_at' => now(),
+                'updated_at' => now(),
             ],
             [
                 'name' => 'Blueberry Muffin',
-                'sku' => 'BAK-001',
+                'sku'  => 'BAK-001',
                 'price' => 300, // $3.00
-                'stock_quantity' => 20,
-                'category' => 'Bakery',
+                'stock_quantity' => 50,
+                'category_id' => $getCatId('Bakery'), // <--- UPDATED
+                'created_at' => now(),
+                'updated_at' => now(),
             ],
             [
                 'name' => 'Club Sandwich',
-                'sku' => 'FOO-001',
+                'sku'  => 'FOD-001',
                 'price' => 850, // $8.50
-                'stock_quantity' => 15,
-                'category' => 'Food',
+                'stock_quantity' => 20,
+                'category_id' => $getCatId('Food'), // <--- UPDATED
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'name' => 'Vanilla Latte',
+                'sku'  => 'BEV-002',
+                'price' => 450, // $4.50
+                'stock_quantity' => 75,
+                'category_id' => $getCatId('Beverages'), // <--- UPDATED
+                'created_at' => now(),
+                'updated_at' => now(),
             ]
-        ];
-
-        foreach ($products as $item) {
-            Product::create($item);
-        }
-
-        // 2. Optional: Generate 50 random items using a Factory
-        // Ideally, you would create a ProductFactory for this, 
-        // but for a quick start, we can just loop here.
+        ]);
+        
+       
         for ($i = 0; $i < 10; $i++) {
-            Product::create([
+            DB::table('products')->insert([
                 'name' => 'Generic Item ' . $i,
-                'sku' => 'GEN-' . Str::random(5),
-                'price' => rand(100, 5000), // Random price $1.00 - $50.00
-                'stock_quantity' => rand(0, 100),
-                'category' => 'General',
-                'is_active' => true,
+                'sku' => 'GEN-' . rand(1000, 9999),
+                'price' => rand(100, 5000),
+                'stock_quantity' => rand(10, 100),
+                'category_id' => $getCatId('General'),
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         }
+        
     }
 }

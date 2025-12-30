@@ -32,7 +32,7 @@ return new class extends Migration
             // Organization
             // If you don't have a categories table yet, you can use a string here for now.
             // If you do, use: $table->foreignId('category_id')->constrained();
-            $table->string('category')->nullable(); 
+            $table->foreignId('category_id')->constrained()->onDelete('cascade');
 
             // Meta
             $table->string('image_path')->nullable(); // URL to product image

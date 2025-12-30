@@ -10,6 +10,15 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        // 1. Create Categories
+        $categories = [
+            'Beverages', 'Bakery', 'Food', 'General', 'Desserts'
+        ];
+        
+        foreach ($categories as $cat) {
+            \App\Models\Category::create(['name' => $cat]);
+        }
+        
         // 1. Create Admin (Only if not exists)
         User::firstOrCreate(
             ['email' => 'admin@email.com'], // Check this email
