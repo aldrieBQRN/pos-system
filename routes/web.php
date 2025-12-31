@@ -3,7 +3,7 @@
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Foundation\Application;
-use Illuminate\Http\Request; // Added explicit import
+use Illuminate\Http\Request;
 use App\Http\Controllers\Api\PosController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Api\ProductController;
@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\HeldOrderController;
 use App\Http\Controllers\Api\TransactionController;
+use Illuminate\Support\Facades\Auth; // <--- ADD THIS
 
 /*
 |--------------------------------------------------------------------------
@@ -20,13 +21,15 @@ use App\Http\Controllers\Api\TransactionController;
 */
 
 // --- Public Pages ---
+
+// --- Public Pages ---
 Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-        'laravelVersion' => Application::VERSION,
-        'phpVersion' => PHP_VERSION,
-    ]);
+    // Check if user is logged in using the Facade
+    if (Auth::check()) {
+        return redirect()->route('dashboard');
+    }
+    // Otherwise, redirect to Login
+    return redirect()->route('login');
 });
 
 // --- Main App Pages (React Views) ---
@@ -34,8 +37,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
     
     // 1. PROTECTED DASHBOARD (Admins Only)
     Route::get('/dashboard', function (Request $request) { 
-        // FIX: Check 'is_admin' instead of 'role'
-        // If is_admin is false (0), redirect to POS
         if (! $request->user()->is_admin) {
             return redirect()->route('pos');
         }
@@ -86,6 +87,8 @@ Route::middleware('auth')->group(function () {
     Route::delete('/api/categories/{id}', [CategoryController::class, 'destroy']);
 
     // Dashboard Analytics
+    // [ADDED] Export Route - Must come before the index route if they conflict, though here it's fine
+    Route::get('/api/dashboard/export', [DashboardController::class, 'export']); 
     Route::get('/api/dashboard', [DashboardController::class, 'index']);
 
     // Transaction History

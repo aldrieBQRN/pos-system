@@ -27,6 +27,8 @@ class HandleInertiaRequests extends Middleware
      *
      * @return array<string, mixed>
      */
+    // app/Http/Middleware/HandleInertiaRequests.php
+
     public function share(Request $request): array
     {
         return [
@@ -34,6 +36,10 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
             ],
+            // [ADD THIS BLOCK] Share settings globally
+            'settings' => function () {
+                return \Illuminate\Support\Facades\DB::table('settings')->pluck('value', 'key');
+            },
         ];
     }
 }

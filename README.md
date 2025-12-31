@@ -3,7 +3,6 @@
 A modern, full-stack Point of Sale (POS) system built with **Laravel 11**, **React**, and **Inertia.js**. Designed for grocery stores, cafes, and retail businesses with real-time inventory management, sales analytics, and thermal receipt printing.
 
 ![Dashboard Screenshot](public/screenshots/dashboard.png)
-*(Place your dashboard screenshot here)*
 
 ## 🚀 Key Features
 
@@ -36,13 +35,26 @@ A modern, full-stack Point of Sale (POS) system built with **Laravel 11**, **Rea
 * **Components:** Headless UI, SweetAlert2, Recharts
 * **Hardware Support:** HTML5-QRCode Scanner, ESC/POS Receipt Styling
 
+
+
+
+
+## 📸 Screenshots
+
+* POS Terminal
+Efficient checkout with barcode scanning and hold order functionality.
+![POS Screenshot](public/screenshots/pos.png)
+
+* Inventory Management
+Track stock levels, manage categories, and export reports.
+![Inventory Screenshot](public/screenshots/inventory.png)
+
+* Transaction History
+View daily sales, filter by date, and void transactions.
+![Transaction Screenshot](public/screenshots/transaction.png)
+
+* Store Settings
+Configure store details and upload custom logo.
+![Settings Screenshot](public/screenshots/setting.png)
+
 ---
-
-## ⚙️ Installation Guide
-
-Follow these steps to set up the project locally.
-
-### 1. Clone the Repository
-```bash
-git clone [https://github.com/yourusername/pos-system.git](https://github.com/yourusername/pos-system.git)
-cd pos-system
