@@ -1,15 +1,13 @@
+import { useState } from 'react';
 import ApplicationLogo from '@/Components/ApplicationLogo';
 import Dropdown from '@/Components/Dropdown';
 import NavLink from '@/Components/NavLink';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink';
 import { Link, usePage } from '@inertiajs/react';
-import { useState } from 'react';
 
 export default function AuthenticatedLayout({ header, children }) {
     const user = usePage().props.auth.user;
-
-    const [showingNavigationDropdown, setShowingNavigationDropdown] =
-        useState(false);
+    const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
 
     return (
         <div className="min-h-screen bg-gray-100">
@@ -60,11 +58,11 @@ export default function AuthenticatedLayout({ header, children }) {
                                         href="/transactions"
                                         active={window.location.pathname === '/transactions'}
                                     >
-                                        History
+                                        Transactions
                                     </NavLink>
                                 )}
 
-                                {/* NEW: SETTINGS - Admin Only */}
+                                {/* SETTINGS - Admin Only */}
                                 {user.is_admin && (
                                     <NavLink
                                         href={route('settings')}
@@ -86,6 +84,7 @@ export default function AuthenticatedLayout({ header, children }) {
                                                 type="button"
                                                 className="inline-flex items-center rounded-md border border-transparent bg-white px-3 py-2 text-sm font-medium leading-4 text-gray-500 transition duration-150 ease-in-out hover:text-gray-700 focus:outline-none"
                                             >
+                                                {/* Display Role Correctly */}
                                                 {user.name} ({user.is_admin ? 'Admin' : 'Cashier'})
 
                                                 <svg
@@ -173,16 +172,14 @@ export default function AuthenticatedLayout({ header, children }) {
                 >
                     <div className="space-y-1 pb-3 pt-2">
                         
-                        {/* Admin Links */}
+                        {/* Admin Links (Mobile) */}
                         {user.is_admin && (
-                            <>
-                                <ResponsiveNavLink
-                                    href={route('dashboard')}
-                                    active={route().current('dashboard')}
-                                >
-                                    Dashboard
-                                </ResponsiveNavLink>
-                            </>
+                            <ResponsiveNavLink
+                                href={route('dashboard')}
+                                active={route().current('dashboard')}
+                            >
+                                Dashboard
+                            </ResponsiveNavLink>
                         )}
 
                         <ResponsiveNavLink
@@ -205,10 +202,9 @@ export default function AuthenticatedLayout({ header, children }) {
                                     href="/transactions"
                                     active={window.location.pathname === '/transactions'}
                                 >
-                                    History
+                                    Transactions
                                 </ResponsiveNavLink>
 
-                                {/* NEW: Mobile Settings Link */}
                                 <ResponsiveNavLink
                                     href={route('settings')}
                                     active={route().current('settings')}

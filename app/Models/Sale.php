@@ -10,27 +10,30 @@ class Sale extends Model
     use HasFactory;
 
     protected $fillable = [
-        'transaction_date', 
-        'invoice_number', 
-        'cashier_id', 
+        'invoice_number',
+        'cashier_id',
         'total_amount',
-        'payment_method',      // <--- Ensure these are here
-        'payment_reference'    // <--- Ensure these are here
+        'cash_given',
+        'change',
+        'payment_method',
+        'payment_reference',
+        'is_senior',
+        'status',
     ];
 
-    /**
-     * Relationship: Who sold this?
-     */
-    public function cashier()
-    {
-        return $this->belongsTo(User::class, 'cashier_id');
-    }
+    protected $casts = [
+        'is_senior' => 'boolean', // Ensures it comes back as true/false, not 1/0
+        'created_at' => 'datetime',
+    ];
 
-    /**
-     * Relationship: What items were sold?
-     */
+    // Relationships
     public function items()
     {
         return $this->hasMany(SaleItem::class);
+    }
+
+    public function cashier()
+    {
+        return $this->belongsTo(User::class, 'cashier_id');
     }
 }

@@ -10,122 +10,155 @@ use Illuminate\Support\Facades\Storage;
 class ProductController extends Controller
 {
     /**
-     * Get list of products (with optional search)
+     * Display a listing of the resource.
      */
     public function index(Request $request)
     {
-        $query = Product::with('category'); // <--- Correct: Loads the relationship
+        $query = Product::with('category');
 
-        // Search logic...
+        // 1. Search Filter
         if ($request->search) {
-            $query->where('name', 'like', '%' . $request->search . '%')
-                ->orWhere('sku', 'like', '%' . $request->search . '%');
+            $query->where(function($q) use ($request) {
+                $q->where('name', 'like', "%{$request->search}%")
+                  ->orWhere('sku', 'like', "%{$request->search}%");
+            });
         }
 
-        // Category Filter logic
-        if ($request->category && $request->category !== 'All') {
+        // 2. Category Filter
+        if ($request->category) {
             $query->where('category_id', $request->category);
         }
 
-        return response()->json($query->orderBy('created_at', 'desc')->paginate(10));
+        // 3. Low Stock Filter
+        if ($request->low_stock === 'true') {
+            $query->where('stock_quantity', '<=', 10);
+        }
+
+        $query->orderBy('created_at', 'desc');
+
+        // 4. FIX: Check if we want ALL data for export
+        if ($request->has('all')) {
+            return $query->get(); // Returns everything as a simple array
+        }
+
+        return $query->paginate(10); // Standard pagination
     }
 
+    /**
+     * Store a newly created resource in storage.
+     */
     public function store(Request $request)
     {
-        // 1. Validate
-        $validated = $request->validate([
+        $request->validate([
             'name' => 'required|string|max:255',
-            'category_id' => 'required|exists:categories,id', // <--- FIX 1: Validate ID existence
+            'category_id' => 'required|exists:categories,id',
             'price' => 'required|numeric|min:0',
             'cost_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'required|integer|min:0',
             'sku' => 'required|string|unique:products,sku',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-        ]);
-
-        try {
-            // 2. Handle Image Upload
-            $imagePath = null;
-            if ($request->hasFile('image')) {
-                $imagePath = $request->file('image')->store('products', 'public');
-            }
-
-            // 3. Create Product
-            $product = Product::create([
-                'name' => $validated['name'],
-                'category_id' => $validated['category_id'], // <--- FIX 2: Use category_id, not category
-                'sku' => $validated['sku'],
-                'stock_quantity' => $validated['stock_quantity'],
-                
-                // Price Math (Multiply by 100 to save as cents)
-                'price' => (int) ($validated['price'] * 100),
-                
-                'cost_price' => !empty($validated['cost_price']) ? (int) ($validated['cost_price'] * 100) : null,
-                
-                'image_path' => $imagePath ? '/storage/' . $imagePath : null,
-                'is_active' => true,
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'product' => $product,
-                'message' => 'Product created successfully!'
-            ], 201);
-
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
-
-    public function update(Request $request, $id)
-    {
-        // 1. Validate
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'category_id' => 'required|exists:categories,id', // <--- FIX 3: Updated validation
-            'price' => 'required|numeric|min:0',
-            'cost_price' => 'nullable|numeric|min:0',
-            'stock_quantity' => 'required|integer|min:0',
-            'sku' => 'required|string|unique:products,sku,' . $id, 
             'image' => 'nullable|image|max:2048',
         ]);
 
-        try {
-            $product = Product::findOrFail($id);
+        $data = $request->all();
 
-            // 2. Handle Image Upload
-            $imagePath = $product->image_path; 
-            if ($request->hasFile('image')) {
-                $newPath = $request->file('image')->store('products', 'public');
-                $imagePath = '/storage/' . $newPath;
+        // Convert Price to Cents (Best Practice for Money)
+        $data['price'] = $request->price * 100;
+        if ($request->cost_price) {
+            $data['cost_price'] = $request->cost_price * 100;
+        }
+
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->store('products', 'public');
+            $data['image_path'] = '/storage/' . $path;
+        }
+
+        $product = Product::create($data);
+
+        return response()->json($product, 201);
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update(Request $request, $id)
+    {
+        $product = Product::findOrFail($id);
+
+        $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'category_id' => 'sometimes|exists:categories,id',
+            'price' => 'sometimes|numeric|min:0',
+            'cost_price' => 'nullable|numeric|min:0',
+            'stock_quantity' => 'sometimes|integer|min:0',
+            'sku' => 'sometimes|string|unique:products,sku,' . $id,
+            'image' => 'nullable|image|max:2048',
+        ]);
+
+        $data = $request->except(['image']);
+
+        // Convert Price to Cents if present
+        if ($request->has('price')) {
+            $data['price'] = $request->price * 100;
+        }
+        if ($request->has('cost_price')) {
+            $data['cost_price'] = $request->cost_price * 100;
+        }
+
+        if ($request->hasFile('image')) {
+            // Delete old image if exists
+            if ($product->image_path) {
+                $oldPath = str_replace('/storage/', '', $product->image_path);
+                Storage::disk('public')->delete($oldPath);
             }
 
-            // 3. Update Database
-            $product->update([
-                'name' => $validated['name'],
-                'category_id' => $validated['category_id'], // <--- FIX 4: Use category_id
-                'sku' => $validated['sku'],
-                'stock_quantity' => $validated['stock_quantity'],
-                'price' => (int) ($validated['price'] * 100),
-                'cost_price' => !empty($validated['cost_price']) ? (int) ($validated['cost_price'] * 100) : null,
-                'image_path' => $imagePath,
-            ]);
-
-            return response()->json(['success' => true, 'message' => 'Product updated!']);
-
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+            $path = $request->file('image')->store('products', 'public');
+            $data['image_path'] = '/storage/' . $path;
         }
+
+        $product->update($data);
+
+        return response()->json($product);
     }
-    
+
+    /**
+     * Remove the specified resource from storage.
+     */
     public function destroy($id)
     {
-        try {
-            $product = Product::findOrFail($id);
-            $product->delete();
-            return response()->json(['success' => true, 'message' => 'Product deleted']);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        $product = Product::findOrFail($id);
+
+        // Optional: Check if product is in a sale before deleting
+        // if ($product->saleItems()->exists()) {
+        //     return response()->json(['message' => 'Cannot delete product with sales history.'], 400);
+        // }
+
+        if ($product->image_path) {
+            $oldPath = str_replace('/storage/', '', $product->image_path);
+            Storage::disk('public')->delete($oldPath);
         }
+
+        $product->delete();
+
+        return response()->json(['message' => 'Product deleted successfully']);
+    }
+
+    /**
+     * NEW: Adjust Stock (Quick Add)
+     */
+    public function adjustStock(Request $request, $id)
+    {
+        $request->validate([
+            'quantity' => 'required|integer|min:1' // Only allow positive increments here
+        ]);
+
+        $product = Product::findOrFail($id);
+        
+        // Add to existing stock
+        $product->increment('stock_quantity', $request->quantity);
+
+        return response()->json([
+            'message' => 'Stock updated successfully',
+            'new_stock' => $product->stock_quantity
+        ]);
     }
 }
