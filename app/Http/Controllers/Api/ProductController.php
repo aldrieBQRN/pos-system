@@ -18,9 +18,9 @@ class ProductController extends Controller
 
         // 1. Search Filter
         if ($request->search) {
-            $query->where(function($q) use ($request) {
+            $query->where(function ($q) use ($request) {
                 $q->where('name', 'like', "%{$request->search}%")
-                  ->orWhere('sku', 'like', "%{$request->search}%");
+                    ->orWhere('sku', 'like', "%{$request->search}%");
             });
         }
 
@@ -122,24 +122,40 @@ class ProductController extends Controller
 
     /**
      * Remove the specified resource from storage.
+     * UPDATED: Now includes robust Error Handling for Foreign Keys
      */
     public function destroy($id)
     {
-        $product = Product::findOrFail($id);
+        try {
+            $product = Product::findOrFail($id);
 
-        // Optional: Check if product is in a sale before deleting
-        // if ($product->saleItems()->exists()) {
-        //     return response()->json(['message' => 'Cannot delete product with sales history.'], 400);
-        // }
+            // Optional: Delete image from storage first
+            if ($product->image_path) {
+                $oldPath = str_replace('/storage/', '', $product->image_path);
+                Storage::disk('public')->delete($oldPath);
+            }
 
-        if ($product->image_path) {
-            $oldPath = str_replace('/storage/', '', $product->image_path);
-            Storage::disk('public')->delete($oldPath);
+            $product->delete();
+
+            return response()->json(['message' => 'Product deleted successfully'], 200);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Error Code 23000 = Integrity Constraint Violation (Foreign Key Fail)
+            if ($e->getCode() == "23000") {
+                return response()->json([
+                    'error' => 'ALERT: You cannot delete this product because it is part of existing sales or inventory records.'
+                ], 409); // 409 Conflict
+            }
+
+            // Other Database Errors
+            return response()->json([
+                'error' => 'Database Error: ' . $e->getMessage()
+            ], 500);
+        } catch (\Exception $e) {
+            // General Server Errors
+            return response()->json([
+                'error' => 'Server Error: ' . $e->getMessage()
+            ], 500);
         }
-
-        $product->delete();
-
-        return response()->json(['message' => 'Product deleted successfully']);
     }
 
     /**
@@ -152,7 +168,7 @@ class ProductController extends Controller
         ]);
 
         $product = Product::findOrFail($id);
-        
+
         // Add to existing stock
         $product->increment('stock_quantity', $request->quantity);
 

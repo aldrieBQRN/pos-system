@@ -1,66 +1,123 @@
 import JsBarcode from 'jsbarcode';
 
 export const printLabels = (product) => {
-    // Create a hidden canvas to generate the base64 barcode
+    // 1. Generate Base64 Barcode ONCE (Efficient)
     const canvas = document.createElement('canvas');
     JsBarcode(canvas, product.sku, {
         format: "CODE128",
         displayValue: true,
         fontSize: 14,
-        height: 30,
-        margin: 0
+        height: 40,
+        margin: 0,
+        fontOptions: "bold"
     });
     const barcodeData = canvas.toDataURL("image/png");
 
+    // 2. Generate the Label HTML (Repeated 12 times for a full sheet)
+    const labelCount = 12;
+    const singleLabelHTML = `
+        <div class="label">
+            <div class="store-name">SMART RETAIL</div>
+            <div class="product-name">${product.name}</div>
+            <div class="price">₱${(product.price / 100).toFixed(2)}</div>
+            <img src="${barcodeData}" alt="Barcode" />
+        </div>
+    `;
+
+    // 3. Build the Full Page HTML
     const html = `
         <html>
             <head>
-                <title>Labels - ${product.name}</title>
+                <title>Print Labels - ${product.name}</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <style>
-                    body { font-family: sans-serif; padding: 20px; }
-                    .label-grid { 
-                        display: grid; 
-                        grid-template-columns: repeat(3, 1fr); /* 3 Labels per row */
-                        gap: 15px; 
+                    body {
+                        font-family: 'Arial', sans-serif;
+                        margin: 0;
+                        padding: 20px;
+                        background: white;
                     }
-                    .label { 
-                        border: 1px dashed #ccc; 
-                        padding: 10px; 
-                        text-align: center; 
+                    .label-grid {
+                        display: grid;
+                        grid-template-columns: repeat(3, 1fr); /* 3 Columns for A4/Letter */
+                        gap: 15px;
+                    }
+                    .label {
+                        border: 2px dashed #ccc;
+                        padding: 15px;
+                        text-align: center;
+                        background: white;
                         border-radius: 8px;
-                        page-break-inside: avoid;
+                        page-break-inside: avoid; /* Prevent cutting labels in half */
                     }
-                    .name { font-weight: bold; font-size: 12px; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                    .price { font-size: 14px; font-weight: bold; margin-bottom: 5px; }
-                    img { max-width: 100%; height: auto; }
-                    
+                    .store-name {
+                        font-size: 10px;
+                        font-weight: bold;
+                        color: #666;
+                        letter-spacing: 1px;
+                        margin-bottom: 5px;
+                    }
+                    .product-name {
+                        font-size: 14px;
+                        font-weight: bold;
+                        margin-bottom: 5px;
+                        height: 36px;
+                        overflow: hidden;
+                        display: -webkit-box;
+                        -webkit-line-clamp: 2;
+                        -webkit-box-orient: vertical;
+                    }
+                    .price {
+                        font-size: 18px;
+                        font-weight: 900;
+                        color: #000;
+                        margin-bottom: 5px;
+                    }
+                    img {
+                        max-width: 100%;
+                        height: auto;
+                        max-height: 50px;
+                    }
+
+                    /* Print Settings */
                     @media print {
-                        body { padding: 0; }
-                        .label { border: 1px solid #eee; } /* Lighter border for print */
+                        @page { margin: 0.5cm; }
+                        body { margin: 0; padding: 0; }
+                        .label { border: 1px solid #ddd; } /* Clean border for print */
                     }
                 </style>
             </head>
             <body>
-                <div class="no-print" style="margin-bottom: 20px; text-align: center;">
-                    <button onclick="window.print()" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">Print Labels</button>
-                    <p>Printing 12 copies of: <strong>${product.name}</strong></p>
-                </div>
-
                 <div class="label-grid">
-                    ${Array(12).fill('').map(() => `
-                        <div class="label">
-                            <div class="name">${product.name}</div>
-                            <div class="price">$${(product.price / 100).toFixed(2)}</div>
-                            <img src="${barcodeData}" />
-                        </div>
-                    `).join('')}
+                    ${Array(labelCount).fill(singleLabelHTML).join('')}
                 </div>
             </body>
         </html>
     `;
 
-    const popup = window.open('', '_blank', 'width=800,height=600');
-    popup.document.open();
-    popup.document.write(html);
-    popup.document.close();
+    // 4. Mobile-Friendly Printing (Using Iframe)
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0px';
+    iframe.style.height = '0px';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    // Trigger Print
+    iframe.contentWindow.focus();
+    setTimeout(() => {
+        iframe.contentWindow.print();
+
+        // Cleanup iframe after printing
+        setTimeout(() => {
+            document.body.removeChild(iframe);
+        }, 5000);
+    }, 500);
 };

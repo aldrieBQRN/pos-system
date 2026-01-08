@@ -1,155 +1,153 @@
 export const printReceipt = (data) => {
-    // Format currency helper
-    const currency = (amount) => {
+    // 1. Helper to format currency (PHP)
+    const fmt = (num) => {
         return new Intl.NumberFormat('en-PH', {
             style: 'currency',
             currency: 'PHP',
             minimumFractionDigits: 2
-        }).format(amount / 100); 
+        }).format(num / 100);
     };
 
+    // 2. Build Items HTML
     const itemsHtml = data.items.map(item => `
-        <div class="item">
-            <div>${item.quantity} x ${item.name}</div>
-            <div class="price">${currency(item.price * item.quantity)}</div>
+        <div class="flex">
+            <span>${item.quantity} x ${item.name}</span>
+            <span class="bold">${fmt(item.price * item.quantity)}</span>
         </div>
     `).join('');
 
-    // --- DISCOUNT LOGIC ---
+    // 3. Build Discount HTML (if applicable)
     let discountHtml = '';
     if (data.is_senior) {
         discountHtml = `
-            <div class="row dashed-top">
+            <div class="line"></div>
+            <div class="flex">
                 <span>Subtotal (VAT Inc):</span>
-                <span>${currency(data.subtotal)}</span>
+                <span>${fmt(data.subtotal)}</span>
             </div>
-            <div class="row">
+            <div class="flex">
                 <span>VAT Exempt Sales:</span>
-                <span>${currency(data.subtotal / 1.12)}</span>
+                <span>${fmt(data.subtotal / 1.12)}</span>
             </div>
-            <div class="row">
+            <div class="flex">
                 <span>Less: 20% Senior/PWD:</span>
-                <span>-${currency(data.discount)}</span>
+                <span>-${fmt(data.discount)}</span>
             </div>
         `;
     }
 
+    // 4. Construct Full HTML
     const html = `
         <html>
-            <head>
-                <title>Receipt ${data.invoice_number}</title>
-                <style>
-                    /* Reset & Basics */
-                    * { box-sizing: border-box; margin: 0; padding: 0; }
-                    body { 
-                        font-family: 'Courier New', monospace; 
-                        font-size: 12px; 
-                        background-color: #f3f4f6; /* Light gray background for the window */
-                        display: flex;
-                        justify-content: center;
-                        padding-top: 20px;
-                    }
-                    
-                    /* The Actual Receipt Paper */
-                    .receipt-container {
-                        width: 300px; /* Standard Thermal Width */
-                        background-color: #fff;
-                        padding: 15px;
-                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                    }
+        <head>
+            <title>Receipt ${data.invoice_number}</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                /* Normalize for Thermal Printers */
+                @media print {
+                    @page { margin: 0; size: auto; } /* Remove headers/footers */
+                    body { margin: 0; padding: 0; }
+                }
 
-                    /* Content Styling */
-                    .header { text-align: center; margin-bottom: 20px; }
-                    .store-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
-                    .meta { font-size: 10px; color: #555; margin-bottom: 15px; text-align: center; }
-                    .item { display: flex; justify-content: space-between; margin-bottom: 5px; }
-                    .price { font-weight: bold; }
-                    .totals { margin-top: 15px; border-top: 1px dashed #000; padding-top: 10px; }
-                    .row { display: flex; justify-content: space-between; margin-bottom: 5px; }
-                    .total-row { font-size: 16px; font-weight: bold; margin-top: 10px; border-top: 2px solid #000; padding-top: 5px; }
-                    .payment-info { margin-top: 10px; font-size: 11px; }
-                    .dashed-top { border-top: 1px dashed #aaa; padding-top: 5px; margin-top: 5px; }
-                    .footer { text-align: center; margin-top: 20px; font-size: 10px; border-top: 1px dotted #ccc; padding-top: 10px; }
-                    
-                    /* Print Settings */
-                    @media print {
-                        body { background-color: #fff; padding: 0; display: block; }
-                        .receipt-container { width: 100%; box-shadow: none; padding: 0; }
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="receipt-container">
-                    <div class="header">
-                        <div class="store-name">${data.store_name}</div>
-                        <div>${data.store_address}</div>
-                        <div>${data.store_phone}</div>
-                    </div>
-                    
-                    <div class="meta">
-                        <div>${new Date().toLocaleString()}</div>
-                        <div>Invoice: ${data.invoice_number}</div>
-                        <div>Cashier: ${data.cashier_id}</div>
-                    </div>
+                body {
+                    font-family: 'Courier New', monospace;
+                    font-size: 12px;
+                    width: 300px; /* Target 58mm paper width */
+                    margin: 0 auto;
+                    padding: 5px;
+                    color: #000;
+                    background: #fff;
+                }
+                .text-center { text-align: center; }
+                .text-right { text-align: right; }
+                .bold { font-weight: bold; }
+                .line { border-top: 1px dashed #000; margin: 8px 0; }
+                .flex { display: flex; justify-content: space-between; margin-bottom: 4px; }
 
-                    <div class="items">
-                        ${itemsHtml}
-                    </div>
+                .title { font-size: 16px; font-weight: bold; margin-bottom: 2px; text-transform: uppercase; }
+                .subtitle { font-size: 11px; color: #333; }
 
-                    <div class="totals">
-                        ${!data.is_senior ? '' : discountHtml}
+                .footer { text-align: center; margin-top: 15px; font-size: 10px; }
+            </style>
+        </head>
+        <body>
+            <div class="text-center">
+                <div class="title">${data.store_name || 'POS System'}</div>
+                <div class="subtitle">${data.store_address || ''}</div>
+                ${data.store_phone ? `<div class="subtitle">Tel: ${data.store_phone}</div>` : ''}
+                <div class="line"></div>
+            </div>
 
-                        <div class="row total-row">
-                            <span>TOTAL</span>
-                            <span>${currency(data.total)}</span>
-                        </div>
+            <div class="flex"><span>Invoice:</span> <span class="bold">${data.invoice_number}</span></div>
+            <div class="flex"><span>Date:</span> <span>${new Date().toLocaleString()}</span></div>
+            <div class="flex"><span>Cashier:</span> <span>${data.cashier_id}</span></div>
+            <div class="line"></div>
 
-                        ${data.payment_method === 'cash' ? `
-                            <div class="payment-info dashed-top">
-                                <div class="row">
-                                    <span>Cash Given:</span>
-                                    <span>${currency(data.cash_given)}</span>
-                                </div>
-                                <div class="row">
-                                    <span>Change:</span>
-                                    <span>${currency(data.change)}</span>
-                                </div>
-                            </div>
-                        ` : `
-                            <div class="payment-info dashed-top">
-                                <div class="row">
-                                    <span>Payment:</span>
-                                    <span style="text-transform:uppercase">${data.payment_method}</span>
-                                </div>
-                            </div>
-                        `}
-                    </div>
+            <div class="items">
+                ${itemsHtml}
+            </div>
 
-                    <div class="footer">
-                        Thank you for your purchase!<br>
-                        Please come again.
-                    </div>
+            ${discountHtml}
+
+            <div class="line"></div>
+
+            <div class="flex bold" style="font-size: 14px;">
+                <span>TOTAL</span>
+                <span>${fmt(data.total)}</span>
+            </div>
+
+            ${data.payment_method === 'cash' ? `
+                <div class="flex" style="margin-top: 5px;">
+                    <span>Cash Given:</span>
+                    <span>${fmt(data.cash_given)}</span>
                 </div>
+                <div class="flex">
+                    <span>Change:</span>
+                    <span>${fmt(data.change)}</span>
+                </div>
+            ` : `
+                <div class="flex" style="margin-top: 5px;">
+                    <span>Payment:</span>
+                    <span style="text-transform:uppercase">${data.payment_method}</span>
+                </div>
+                ${data.reference ? `<div class="flex"><span>Ref:</span><span>${data.reference}</span></div>` : ''}
+            `}
 
-                <script>
-                    window.print();
-                    // Close window after print dialog is closed (works in Chrome)
-                    window.onafterprint = function(){
-                        window.close();
-                    }
-                </script>
-            </body>
+            <div class="line"></div>
+
+            <div class="footer">
+                Thank you for your purchase!<br>
+                Please come again.
+            </div>
+
+            <br/><br/>
+        </body>
         </html>
     `;
 
-    // --- CALCULATE CENTER POSITION ---
-    const width = 400;
-    const height = 600;
-    const left = (window.screen.width / 2) - (width / 2);
-    const top = (window.screen.height / 2) - (height / 2);
+    // 5. Mobile-Friendly Printing (Using Iframe)
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0px';
+    iframe.style.height = '0px';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
 
-    const popup = window.open('', '_blank', `width=${width},height=${height},top=${top},left=${left}`);
-    popup.document.open();
-    popup.document.write(html);
-    popup.document.close();
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    // Trigger Print
+    iframe.contentWindow.focus();
+    setTimeout(() => {
+        iframe.contentWindow.print();
+
+        // Remove iframe after printing is initiated
+        setTimeout(() => {
+            document.body.removeChild(iframe);
+        }, 5000);
+    }, 500);
 };

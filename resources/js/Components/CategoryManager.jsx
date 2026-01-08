@@ -25,15 +25,14 @@ export default function CategoryManager({ onClose, onUpdate }) {
             await axios.post('/api/categories', { name: newCategory });
             setNewCategory('');
             fetchCategories();
-            onUpdate(); 
-            
-            // CENTERED SUCCESS
-            Swal.fire({ 
-                icon: 'success', 
-                title: 'Category Added!', 
+            onUpdate();
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Category Added!',
                 text: 'New category created successfully.',
-                showConfirmButton: false, 
-                timer: 1500 
+                showConfirmButton: false,
+                timer: 1500
             });
 
         } catch (error) {
@@ -49,7 +48,6 @@ export default function CategoryManager({ onClose, onUpdate }) {
 
     const handleDelete = async (id) => {
         try {
-            // Confirm before delete
             const result = await Swal.fire({
                 title: 'Are you sure?',
                 text: "You won't be able to revert this!",
@@ -64,14 +62,13 @@ export default function CategoryManager({ onClose, onUpdate }) {
                 await axios.delete(`/api/categories/${id}`);
                 fetchCategories();
                 onUpdate();
-                
-                // CENTERED SUCCESS
-                Swal.fire({ 
-                    icon: 'success', 
-                    title: 'Deleted!', 
+
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Deleted!',
                     text: 'Category has been removed.',
-                    showConfirmButton: false, 
-                    timer: 1500 
+                    showConfirmButton: false,
+                    timer: 1500
                 });
             }
 
@@ -101,14 +98,13 @@ export default function CategoryManager({ onClose, onUpdate }) {
                 await axios.put(`/api/categories/${category.id}`, { name: newName });
                 fetchCategories();
                 onUpdate();
-                
-                // CENTERED SUCCESS
-                Swal.fire({ 
-                    icon: 'success', 
-                    title: 'Updated!', 
+
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Updated!',
                     text: 'Category name has been changed.',
-                    showConfirmButton: false, 
-                    timer: 1500 
+                    showConfirmButton: false,
+                    timer: 1500
                 });
 
             } catch (error) {
@@ -122,31 +118,34 @@ export default function CategoryManager({ onClose, onUpdate }) {
     };
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white w-full max-w-md rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-                
+        // FIXED: Added 'p-4' here to create a gap from the screen edges
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-fade-in p-4">
+
+            {/* Modal Container */}
+            <div className="bg-white w-full max-w-md rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
                 {/* Header */}
-                <div className="bg-gray-50 px-6 py-4 border-b flex justify-between items-center">
-                    <h3 className="text-lg font-bold text-gray-800">Manage Categories</h3>
-                    <button onClick={onClose} className="text-gray-400 hover:text-red-500 text-2xl">&times;</button>
+                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:py-4 border-b flex justify-between items-center shrink-0">
+                    <h3 className="text-lg font-bold text-gray-800">Manage Categoriesd</h3>
+                    <button onClick={onClose} className="text-gray-400 hover:text-red-500 text-2xl font-bold transition-colors">&times;</button>
                 </div>
 
                 {/* Body */}
-                <div className="p-6 flex-1 overflow-y-auto">
-                    
+                <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
+
                     {/* Add Form */}
-                    <form onSubmit={handleAdd} className="flex gap-2 mb-6">
-                        <input 
-                            type="text" 
-                            className="flex-1 border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                    <form onSubmit={handleAdd} className="flex gap-2 mb-4 sm:mb-6">
+                        <input
+                            type="text"
+                            className="flex-1 border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm sm:text-base py-2"
                             placeholder="New Category Name..."
                             value={newCategory}
                             onChange={(e) => setNewCategory(e.target.value)}
                         />
-                        <button 
-                            type="submit" 
+                        <button
+                            type="submit"
                             disabled={loading}
-                            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50"
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50 text-sm sm:text-base whitespace-nowrap"
                         >
                             Add
                         </button>
@@ -156,20 +155,25 @@ export default function CategoryManager({ onClose, onUpdate }) {
                     <div className="space-y-2">
                         {categories.map(cat => (
                             <div key={cat.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border hover:border-blue-200 transition-colors">
-                                <span className="font-medium text-gray-700">{cat.name}</span>
-                                <div className="flex gap-2">
-                                    <button 
+                                {/* Name: Truncate to safe space */}
+                                <span className="font-medium text-gray-700 truncate flex-1 mr-2 text-sm sm:text-base" title={cat.name}>
+                                    {cat.name}
+                                </span>
+
+                                {/* Actions */}
+                                <div className="flex gap-2 shrink-0">
+                                    <button
                                         onClick={() => handleEdit(cat)}
-                                        className="text-blue-600 hover:bg-blue-100 p-1 rounded"
+                                        className="text-blue-600 hover:bg-blue-100 p-1.5 rounded transition-colors"
                                         title="Edit"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
                                         </svg>
                                     </button>
-                                    <button 
+                                    <button
                                         onClick={() => handleDelete(cat.id)}
-                                        className="text-red-500 hover:bg-red-100 p-1 rounded"
+                                        className="text-red-500 hover:bg-red-100 p-1.5 rounded transition-colors"
                                         title="Delete"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">

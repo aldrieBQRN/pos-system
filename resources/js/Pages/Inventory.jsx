@@ -2,19 +2,24 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head } from '@inertiajs/react';
-import Barcode from '@/Components/Barcode'; 
+import Barcode from '@/Components/Barcode';
 import MobileScanner from '@/Components/MobileScanner';
 import CategoryManager from '@/Components/CategoryManager';
-import Swal from 'sweetalert2'; 
-import { printLabels } from '@/Utils/printLabels'; 
+import Swal from 'sweetalert2';
+import { printLabels } from '@/Utils/printLabels';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 
 export default function Inventory({ auth }) {
     const [products, setProducts] = useState([]);
-    const [categories, setCategories] = useState([]); 
-    const [links, setLinks] = useState([]); 
-    const [totalRecords, setTotalRecords] = useState(0); 
-    const [currentPage, setCurrentPage] = useState(1); 
-    
+    const [categories, setCategories] = useState([]);
+    const [links, setLinks] = useState([]);
+    const [totalRecords, setTotalRecords] = useState(0);
+    const [currentPage, setCurrentPage] = useState(1);
+
+    // NEW: Loading state for export button
+    const [isExporting, setIsExporting] = useState(false);
+
     const [showModal, setShowModal] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [showScanner, setShowScanner] = useState(false);
@@ -24,7 +29,7 @@ export default function Inventory({ auth }) {
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterCategory, setFilterCategory] = useState('');
-    const [showLowStock, setShowLowStock] = useState(false); 
+    const [showLowStock, setShowLowStock] = useState(false);
 
     const [formData, setFormData] = useState({
         name: '', category_id: '', price: '', cost_price: '', stock_quantity: '', sku: '', image: null
@@ -49,9 +54,9 @@ export default function Inventory({ auth }) {
                 }
             });
             setProducts(response.data.data);
-            setLinks(response.data.links); 
-            setTotalRecords(response.data.total); 
-            setCurrentPage(response.data.current_page); 
+            setLinks(response.data.links);
+            setTotalRecords(response.data.total);
+            setCurrentPage(response.data.current_page);
         } catch (error) {
             console.error("Error loading products:", error);
         }
@@ -78,47 +83,122 @@ export default function Inventory({ auth }) {
             try {
                 await axios.post(`/api/products/${product.id}/stock`, { quantity: quantity });
                 Swal.fire({ icon: 'success', title: 'Stock Updated', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
-                loadProducts(); 
+                loadProducts();
             } catch (error) {
                 Swal.fire('Error', 'Failed to update stock', 'error');
             }
         }
     };
 
-    const exportCSV = async () => {
-        Swal.fire({ title: 'Exporting...', didOpen: () => Swal.showLoading() });
+   // --- PROFESSIONAL EXCEL EXPORT ---
+    const exportExcel = async () => {
+        setIsExporting(true); // Show loading spinner
+
         try {
+            // 1. Fetch ALL data from the server
             const response = await axios.get('/api/products', {
                 params: { search: searchTerm, category: filterCategory, low_stock: showLowStock, all: true }
             });
-            const allData = response.data;
-            if (allData.length === 0) { Swal.close(); return Swal.fire('Info', 'No data to export', 'info'); }
 
-            let csvContent = "data:text/csv;charset=utf-8,SKU,Name,Category,Price,Cost,Stock\n";
-            allData.forEach(p => {
-                const safeName = p.name.replace(/"/g, '""');
-                const row = `${p.sku},"${safeName}",${p.category?.name || 'Uncategorized'},${(p.price / 100).toFixed(2)},${p.cost_price ? (p.cost_price / 100).toFixed(2) : '0.00'},${p.stock_quantity}`;
-                csvContent += row + "\n";
+            const products = response.data;
+
+            if (!products || products.length === 0) {
+                Swal.fire('No Data', 'There are no products to export.', 'info');
+                return;
+            }
+
+            // 2. Create a new Workbook
+            const workbook = new ExcelJS.Workbook();
+            const worksheet = workbook.addWorksheet('Inventory Report');
+
+            // 3. Define Columns & Widths
+            worksheet.columns = [
+                { header: 'SKU / Barcode', key: 'sku', width: 15 },
+                { header: 'Product Name', key: 'name', width: 30 },
+                { header: 'Category', key: 'category', width: 20 },
+                { header: 'Price', key: 'price', width: 12 },
+                { header: 'Cost', key: 'cost', width: 12 },
+                { header: 'Stock', key: 'stock', width: 10 },
+                { header: 'Status', key: 'status', width: 15 },
+            ];
+
+            // 4. Style the Header Row (The "Professional" Look)
+            const headerRow = worksheet.getRow(1);
+            headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 }; // White Text
+            headerRow.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FF2563EB' } // Professional Blue Background
+            };
+            headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+            headerRow.height = 30; // Taller header
+
+            // 5. Add Data Rows
+            products.forEach(p => {
+                const row = worksheet.addRow({
+                    sku: p.sku,
+                    name: p.name,
+                    category: p.category?.name || 'Uncategorized',
+                    price: p.price / 100, // Convert cents to dollars
+                    cost: p.cost_price ? p.cost_price / 100 : 0,
+                    stock: p.stock_quantity,
+                    status: p.stock_quantity <= 10 ? 'Low Stock' : 'In Stock'
+                });
+
+                // Conditional Formatting: Red text for Low Stock
+                if (p.stock_quantity <= 10) {
+                    row.getCell('stock').font = { color: { argb: 'FFFF0000' }, bold: true };
+                    row.getCell('status').font = { color: { argb: 'FFFF0000' }, bold: true };
+                }
+
+                // Currency Formatting for Price & Cost
+                row.getCell('price').numFmt = '"₱"#,##0.00';
+                row.getCell('cost').numFmt = '"₱"#,##0.00';
+
+                // Center align specific columns
+                row.getCell('sku').alignment = { horizontal: 'center' };
+                row.getCell('stock').alignment = { horizontal: 'center' };
+                row.getCell('status').alignment = { horizontal: 'center' };
             });
 
-            const encodedUri = encodeURI(csvContent);
-            const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `inventory_export_${new Date().toISOString().slice(0,10)}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            Swal.close();
-        } catch (error) { Swal.fire('Error', 'Failed to export', 'error'); }
+            // 6. Add Borders to all cells
+            worksheet.eachRow((row, rowNumber) => {
+                row.eachCell((cell) => {
+                    cell.border = {
+                        top: { style: 'thin' },
+                        left: { style: 'thin' },
+                        bottom: { style: 'thin' },
+                        right: { style: 'thin' }
+                    };
+                });
+            });
+
+            // 7. Generate & Save File
+            const buffer = await workbook.xlsx.writeBuffer();
+            const date = new Date().toISOString().split('T')[0];
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            saveAs(blob, `Inventory_Report_${date}.xlsx`);
+
+            // Success Message
+            const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000 });
+            Toast.fire({ icon: 'success', title: 'Excel Report downloaded!' });
+
+        } catch (error) {
+            console.error("Export failed:", error);
+            Swal.fire('Export Failed', 'Could not generate the Excel file.', 'error');
+        } finally {
+            setIsExporting(false);
+        }
     };
 
     const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
     const handleFileChange = (e) => setFormData({ ...formData, image: e.target.files[0] });
     const generateSKU = () => { const r = Math.floor(10000000 + Math.random() * 90000000).toString(); setFormData({ ...formData, sku: r }); };
-    
+
     const handleScan = (d) => { setFormData(p => ({ ...p, sku: d })); setShowScanner(false); new Audio('/beep.mp3').play().catch(()=>{}); };
     const openAddModal = () => { setEditMode(false); setEditingId(null); setFormData({ name: '', category_id: '', price: '', cost_price: '', stock_quantity: '', sku: '', image: null }); setShowModal(true); };
     const openEditModal = (p) => { setEditMode(true); setEditingId(p.id); setFormData({ name: p.name, category_id: p.category_id || '', price: (p.price / 100).toFixed(2), cost_price: p.cost_price ? (p.cost_price / 100).toFixed(2) : '', stock_quantity: p.stock_quantity, sku: p.sku, image: null }); setShowModal(true); };
-    
+
     const handleSubmit = async (e) => {
         e.preventDefault(); setIsSaving(true);
         const data = new FormData();
@@ -129,46 +209,103 @@ export default function Inventory({ auth }) {
             setShowModal(false); loadProducts(); Swal.fire({ icon: 'success', title: 'Saved!', showConfirmButton: false, timer: 1500 });
         } catch(err) { Swal.fire('Error', 'Failed to save', 'error'); } finally { setIsSaving(false); }
     };
-    const handleDelete = async (id) => { const r = await Swal.fire({ title: 'Are you sure?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Yes' }); if(r.isConfirmed) { await axios.delete(`/api/products/${id}`); loadProducts(); Swal.fire('Deleted!', '', 'success'); } };
+
+    // --- UPDATED: User-Friendly Delete Function ---
+    const handleDelete = async (id) => {
+        const r = await Swal.fire({
+            title: 'Delete this product?',
+            text: "Are you sure you want to remove this item?",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Yes, delete it'
+        });
+
+        if (r.isConfirmed) {
+            try {
+                await axios.delete(`/api/products/${id}`);
+                loadProducts();
+                Swal.fire('Deleted!', 'The product has been removed successfully.', 'success');
+            } catch (error) {
+                console.error(error);
+                const serverMessage = error.response?.data?.error;
+                const fallbackMessage = "This product cannot be deleted right now. It might be linked to existing sales records.";
+
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Action Blocked',
+                    text: serverMessage || fallbackMessage,
+                    footer: '<b>Tip:</b> Instead of deleting, try setting Stock to 0 to hide it.'
+                });
+            }
+        }
+    };
 
     return (
         <AuthenticatedLayout user={auth.user} header={<h2 className="font-semibold text-xl text-gray-800">Inventory</h2>}>
             <Head title="Inventory" />
 
-            <div className="py-12 bg-gray-50 min-h-screen">
+            <div className="py-6 sm:py-12 bg-gray-50 min-h-screen">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-                    
-                    {/* Header */}
-                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                        <h1 className="text-3xl font-bold text-gray-800">Inventory</h1>
-                        <div className="flex gap-2">
-                            <button onClick={exportCSV} className="bg-white text-green-600 border border-green-600 px-4 py-2 rounded-lg font-bold hover:bg-green-50 flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
-                                Export
+
+                    {/* HEADER: Responsive Wrap */}
+                    <div className="flex flex-col lg:flex-row justify-between items-center gap-4">
+                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Inventory</h1>
+                        <div className="flex flex-wrap justify-center gap-2 w-full lg:w-auto">
+                            {/* Export Button */}
+                            <button
+                                onClick={exportExcel}
+                                disabled={isExporting}
+                                className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 border shadow-sm transition-all text-sm sm:text-base
+                                    ${isExporting
+                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200'
+                                        : 'bg-white text-green-700 border-green-200 hover:bg-green-50 hover:border-green-300'
+                                    }`}
+                            >
+                                {isExporting ? (
+                                    <>
+                                        <svg className="animate-spin h-5 w-5 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Exporting...
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                        </svg>
+                                        Export Excel
+                                    </>
+                                )}
                             </button>
-                            <button onClick={() => setShowCategoryManager(true)} className="bg-white text-gray-700 px-4 py-2 rounded-lg font-bold border hover:bg-gray-50">Categories</button>
-                            <button onClick={openAddModal} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700 shadow">+ Add Product</button>
+
+                            <button onClick={() => setShowCategoryManager(true)} className="bg-white text-gray-700 px-4 py-2 rounded-lg font-bold border hover:bg-gray-50 text-sm sm:text-base">Categories</button>
+                            <button onClick={openAddModal} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700 shadow text-sm sm:text-base">+ Add Product</button>
                         </div>
                     </div>
 
-                    {/* Toolbar */}
+                    {/* TOOLBAR: Responsive Stack */}
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row gap-4 items-center">
                         <div className="relative flex-1 w-full">
-                            <input type="text" placeholder="Search product..." className="pl-10 pr-4 py-2 border rounded-lg w-full" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                            <input type="text" placeholder="Search product..." className="pl-10 pr-4 py-2 border rounded-lg w-full focus:ring-blue-500 focus:border-blue-500" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                             <svg className="w-5 h-5 text-gray-400 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                         </div>
-                        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="border rounded-lg py-2 pl-3 pr-10 w-full sm:w-48">
+                        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="border rounded-lg py-2 pl-3 pr-10 w-full sm:w-48 focus:ring-blue-500 focus:border-blue-500">
                             <option value="">All Categories</option>
                             {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
-                        <button onClick={() => setShowLowStock(!showLowStock)} className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 border transition-all whitespace-nowrap ${showLowStock ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+                        <button onClick={() => setShowLowStock(!showLowStock)} className={`w-full sm:w-auto px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 border transition-all whitespace-nowrap ${showLowStock ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
                             {showLowStock ? 'Low Stock Only' : 'Show Low Stock'}
                         </button>
                     </div>
 
-                    {/* Table */}
-                    <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
+                    {/* --- RESPONSIVE DATA DISPLAY --- */}
+
+                    {/* OPTION A: DESKTOP TABLE (Hidden on Mobile) */}
+                    <div className="hidden md:block bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
                                 <thead className="bg-gray-50 border-b text-gray-600 uppercase text-xs">
@@ -194,7 +331,7 @@ export default function Inventory({ auth }) {
                                                 <span className="font-bold text-gray-800">{p.name}</span>
                                             </td>
                                             <td className="p-4 text-gray-500">{p.category?.name || 'Uncategorized'}</td>
-                                            <td className="p-4 font-bold text-green-600">${(p.price / 100).toFixed(2)}</td>
+                                            <td className="p-4 font-bold text-green-600">₱{(p.price / 100).toFixed(2)}</td>
                                             <td className="p-4">
                                                 <div className="flex items-center gap-2">
                                                     <span className={`px-2 py-1 rounded-full text-xs font-bold ${p.stock_quantity <= 10 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{p.stock_quantity} units</span>
@@ -202,37 +339,82 @@ export default function Inventory({ auth }) {
                                                 </div>
                                             </td>
                                             <td className="p-4 text-center flex justify-center gap-2">
-                                                <button onClick={() => openEditModal(p)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg></button>
+                                                <button onClick={() => openEditModal(p)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg></button>
                                                 <button onClick={() => printLabels(p)} className="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full" title="Print Labels"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" /></svg></button>
-                                                <button onClick={() => handleDelete(p.id)} className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg></button>
+                                                <button onClick={() => handleDelete(p.id)} className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-full" title="Delete"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg></button>
                                             </td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                         </div>
-                        
-                        {/* PAGINATION ADJUSTED */}
-                        <div className="px-6 py-4 border-t border-gray-100 flex justify-between items-center bg-gray-50">
-                            <span className="text-sm text-gray-500">
-                                Page <span className="font-bold">{currentPage}</span>
-                            </span>
-                            <div className="flex gap-1">
-                                {links.map((link, index) => (
-                                    <button
-                                        key={index}
-                                        disabled={!link.url || link.active}
-                                        onClick={() => link.url && loadProducts(link.url)}
-                                        dangerouslySetInnerHTML={{ __html: link.label }}
-                                        className={`px-3 py-1 rounded text-sm font-medium border transition-colors
-                                            ${link.active 
-                                                ? 'bg-blue-600 text-white border-blue-600' 
-                                                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
-                                            } 
-                                            ${!link.url && 'opacity-50 cursor-not-allowed'}`}
-                                    />
-                                ))}
+                    </div>
+
+                    {/* OPTION B: MOBILE CARD VIEW (Visible only on Mobile) */}
+                    <div className="md:hidden space-y-4">
+                        {products.map((p) => (
+                            <div key={p.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-3">
+                                <div className="flex gap-4">
+                                    {/* Image */}
+                                    <div className="w-16 h-16 bg-gray-50 rounded-lg border flex items-center justify-center overflow-hidden shrink-0">
+                                        {p.image_path ? <img src={p.image_path} className="w-full h-full object-cover"/> : (
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-gray-300"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                                        )}
+                                    </div>
+                                    <div className="flex-1">
+                                        <h3 className="font-bold text-gray-800 text-lg leading-tight">{p.name}</h3>
+                                        <p className="text-sm text-gray-500">{p.category?.name || 'Uncategorized'}</p>
+                                        <div className="flex justify-between items-center mt-1">
+                                            <p className="font-bold text-green-600 text-lg">₱{(p.price / 100).toFixed(2)}</p>
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${p.stock_quantity <= 10 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                                {p.stock_quantity} Left
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-between items-center bg-gray-50 p-2 rounded-lg">
+                                    <Barcode value={p.sku} width={1} height={20} fontSize={10} />
+                                    <button onClick={() => handleQuickAdd(p)} className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded font-bold hover:bg-blue-200">
+                                        + Add Stock
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-100">
+                                    <button onClick={() => openEditModal(p)} className="py-2 text-sm font-medium text-gray-600 bg-gray-50 rounded hover:bg-gray-100 text-center flex items-center justify-center gap-1">
+                                        Edit
+                                    </button>
+                                    <button onClick={() => printLabels(p)} className="py-2 text-sm font-medium text-gray-600 bg-gray-50 rounded hover:bg-gray-100 text-center flex items-center justify-center gap-1">
+                                        Print
+                                    </button>
+                                    <button onClick={() => handleDelete(p.id)} className="py-2 text-sm font-medium text-red-600 bg-red-50 rounded hover:bg-red-100 text-center flex items-center justify-center gap-1">
+                                        Delete
+                                    </button>
+                                </div>
                             </div>
+                        ))}
+                    </div>
+
+                    {/* Pagination */}
+                    <div className="px-6 py-4 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center bg-gray-50 gap-4 rounded-b-xl">
+                        <span className="text-sm text-gray-500">
+                            Page <span className="font-bold">{currentPage}</span>
+                        </span>
+                        <div className="flex gap-1 flex-wrap justify-center">
+                            {links.map((link, index) => (
+                                <button
+                                    key={index}
+                                    disabled={!link.url || link.active}
+                                    onClick={() => link.url && loadProducts(link.url)}
+                                    dangerouslySetInnerHTML={{ __html: link.label }}
+                                    className={`px-3 py-1 rounded text-sm font-medium border transition-colors
+                                        ${link.active
+                                            ? 'bg-blue-600 text-white border-blue-600'
+                                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                                        }
+                                        ${!link.url && 'opacity-50 cursor-not-allowed'}`}
+                                />
+                            ))}
                         </div>
                     </div>
                 </div>
@@ -240,7 +422,7 @@ export default function Inventory({ auth }) {
 
             {/* MODALS */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
                     <div className="bg-white w-full max-w-md rounded-xl shadow-2xl p-6 animate-fade-in-up max-h-[90vh] overflow-y-auto">
                         <h2 className="text-xl font-bold mb-4 text-gray-800">{editMode ? 'Edit Product' : 'Add New Product'}</h2>
                         <form onSubmit={handleSubmit} className="space-y-4">
@@ -248,8 +430,8 @@ export default function Inventory({ auth }) {
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Product Name</label>
                                 <input name="name" required value={formData.name} onChange={handleChange} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="e.g. Cappuccino" />
                             </div>
-                            
-                            <div className="flex gap-4">
+
+                            <div className="flex flex-col sm:flex-row gap-4">
                                 <div className="flex-1">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
                                     <select name="category_id" value={formData.category_id} onChange={handleChange} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500" required>
@@ -258,12 +440,12 @@ export default function Inventory({ auth }) {
                                     </select>
                                 </div>
                                 <div className="flex-1">
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Price ($)</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Price (₱)</label>
                                     <input type="number" step="0.01" name="price" required value={formData.price} onChange={handleChange} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="0.00" />
                                 </div>
                             </div>
 
-                            <div className="flex gap-4">
+                            <div className="flex flex-col sm:flex-row gap-4">
                                 <div className="flex-1">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Stock</label>
                                     <input type="number" name="stock_quantity" required value={formData.stock_quantity} onChange={handleChange} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="0" />

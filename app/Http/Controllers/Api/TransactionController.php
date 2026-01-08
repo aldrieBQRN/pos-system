@@ -16,34 +16,38 @@ class TransactionController extends Controller
         $query = Sale::with(['items.product', 'cashier'])
             ->orderBy('created_at', 'desc');
 
-        // 1. UPDATED: Date Range Filter
+        // 1. Date Range Filter
         if ($request->start_date && $request->end_date) {
             $query->whereBetween('created_at', [
                 Carbon::parse($request->start_date)->startOfDay(),
                 Carbon::parse($request->end_date)->endOfDay()
             ]);
         } elseif ($request->start_date) {
-            // If only start date is picked, show everything from that day onwards
             $query->where('created_at', '>=', Carbon::parse($request->start_date)->startOfDay());
         } elseif ($request->end_date) {
-            // If only end date is picked, show everything up to that day
             $query->where('created_at', '<=', Carbon::parse($request->end_date)->endOfDay());
         }
 
         // 2. Search Filter
         if ($request->search) {
             $search = $request->search;
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('invoice_number', 'like', "%$search%")
-                  ->orWhereHas('cashier', function($q2) use ($search) {
-                      $q2->where('name', 'like', "%$search%");
-                  });
+                    ->orWhereHas('cashier', function ($q2) use ($search) {
+                        $q2->where('name', 'like', "%$search%");
+                    });
             });
         }
 
-        // 3. Summaries (Exclude Voids)
+        // --- NEW: EXPORT CHECK ---
+        // If "all=true" is sent, return EVERYTHING immediately (no paging)
+        if ($request->has('all')) {
+            return $query->get();
+        }
+
+        // 3. Summaries (Only for normal page view)
         $statsQuery = clone $query;
-        $statsQuery->where('status', 'completed'); 
+        $statsQuery->where('status', 'completed');
 
         $summary = [
             'total_sales' => $statsQuery->sum('total_amount'),

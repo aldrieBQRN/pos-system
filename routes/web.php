@@ -12,15 +12,14 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\HeldOrderController;
 use App\Http\Controllers\Api\TransactionController;
-use Illuminate\Support\Facades\Auth; // <--- ADD THIS
+use App\Http\Controllers\Api\ShiftController;
+use Illuminate\Support\Facades\Auth;
 
 /*
 |--------------------------------------------------------------------------
 | Web Routes
 |--------------------------------------------------------------------------
 */
-
-// --- Public Pages ---
 
 // --- Public Pages ---
 Route::get('/', function () {
@@ -34,19 +33,35 @@ Route::get('/', function () {
 
 // --- Main App Pages (React Views) ---
 Route::middleware(['auth', 'verified'])->group(function () {
-    
+
     // 1. PROTECTED DASHBOARD (Admins Only)
-    Route::get('/dashboard', function (Request $request) { 
+    Route::get('/dashboard', function (Request $request) {
         if (! $request->user()->is_admin) {
             return redirect()->route('pos');
         }
-        return Inertia::render('Dashboard'); 
+        return Inertia::render('Dashboard');
     })->name('dashboard');
 
-    Route::get('/pos', function () { return Inertia::render('PosTerminal'); })->name('pos');
-    Route::get('/inventory', function () { return Inertia::render('Inventory'); })->name('inventory');
-    Route::get('/transactions', function () { return Inertia::render('Transactions'); })->name('history');
-    Route::get('/settings', function () { return Inertia::render('Settings'); })->name('settings');
+    // 2. SHIFT HISTORY (Admins Only) - [NEW]
+    Route::get('/shifts', function (Request $request) {
+        if (! $request->user()->is_admin) {
+            return redirect()->route('pos');
+        }
+        return Inertia::render('ShiftHistory');
+    })->name('shifts.index');
+
+    Route::get('/pos', function () {
+        return Inertia::render('PosTerminal');
+    })->name('pos');
+    Route::get('/inventory', function () {
+        return Inertia::render('Inventory');
+    })->name('inventory');
+    Route::get('/transactions', function () {
+        return Inertia::render('Transactions');
+    })->name('history');
+    Route::get('/settings', function () {
+        return Inertia::render('Settings');
+    })->name('settings');
 });
 
 // --- Authenticated Logic (API & Profile) ---
@@ -59,11 +74,17 @@ Route::middleware('auth')->group(function () {
     // ====================================================
     //  API ROUTES
     // ====================================================
-    
+
     // User Info
     Route::get('/api/user', function (Request $request) {
         return $request->user();
     });
+
+    // Shift Management
+    Route::get('/api/shifts', [ShiftController::class, 'index']); // [NEW] History List
+    Route::get('/api/shift/check', [ShiftController::class, 'check']);
+    Route::post('/api/shift/start', [ShiftController::class, 'start']);
+    Route::post('/api/shift/close', [ShiftController::class, 'close']);
 
     // POS & Checkout
     Route::post('/api/checkout', [PosController::class, 'checkout']);
@@ -87,8 +108,7 @@ Route::middleware('auth')->group(function () {
     Route::delete('/api/categories/{id}', [CategoryController::class, 'destroy']);
 
     // Dashboard Analytics
-    // [ADDED] Export Route - Must come before the index route if they conflict, though here it's fine
-    Route::get('/api/dashboard/export', [DashboardController::class, 'export']); 
+    Route::get('/api/dashboard/export', [DashboardController::class, 'export']);
     Route::get('/api/dashboard', [DashboardController::class, 'index']);
 
     // Transaction History
@@ -100,4 +120,4 @@ Route::middleware('auth')->group(function () {
     Route::post('/api/settings', [SettingController::class, 'update']);
 });
 
-require __DIR__.'/auth.php';
+require __DIR__ . '/auth.php';
