@@ -4,68 +4,38 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use App\Models\Category; // Import the Category model
+use App\Models\Category;
 
 class ProductSeeder extends Seeder
 {
     public function run(): void
     {
-        // 1. Helper to get ID (or create if missing)
-        $getCatId = function ($name) {
-            return Category::firstOrCreate(['name' => $name])->id;
-        };
+        // Get all available category IDs
+        $categoryIds = Category::pluck('id')->toArray();
 
-        DB::table('products')->insert([
-            [
-                'name' => 'Espresso Shot',
-                'sku'  => 'BEV-001',
-                'price' => 250, // $2.50
-                'stock_quantity' => 100,
-                'category_id' => $getCatId('Beverages'), // <--- UPDATED
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
-            [
-                'name' => 'Blueberry Muffin',
-                'sku'  => 'BAK-001',
-                'price' => 300, // $3.00
-                'stock_quantity' => 50,
-                'category_id' => $getCatId('Bakery'), // <--- UPDATED
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
-            [
-                'name' => 'Club Sandwich',
-                'sku'  => 'FOD-001',
-                'price' => 850, // $8.50
-                'stock_quantity' => 20,
-                'category_id' => $getCatId('Food'), // <--- UPDATED
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
-            [
-                'name' => 'Vanilla Latte',
-                'sku'  => 'BEV-002',
-                'price' => 450, // $4.50
-                'stock_quantity' => 75,
-                'category_id' => $getCatId('Beverages'), // <--- UPDATED
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]
-        ]);
-        
-       
-        for ($i = 0; $i < 10; $i++) {
-            DB::table('products')->insert([
-                'name' => 'Generic Item ' . $i,
-                'sku' => 'GEN-' . rand(1000, 9999),
-                'price' => rand(100, 5000),
-                'stock_quantity' => rand(10, 100),
-                'category_id' => $getCatId('General'),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+        // Fallback just in case categories aren't seeded yet
+        if (empty($categoryIds)) {
+            for ($c = 1; $c <= 5; $c++) {
+                $categoryIds[] = Category::firstOrCreate(['name' => 'Category ' . $c])->id;
+            }
         }
-        
+
+        $products = [];
+
+        // Loop to create Product 1 to 25
+        for ($i = 1; $i <= 25; $i++) {
+            $products[] = [
+                'name' => 'Product ' . $i,
+                'sku' => 'PROD-' . str_pad($i, 4, '0', STR_PAD_LEFT), // Generates PROD-0001, PROD-0002...
+                'price' => rand(100, 5000), // Random price between 1.00 and 50.00
+                'stock_quantity' => rand(10, 100),
+                'category_id' => $categoryIds[array_rand($categoryIds)], // Randomly pick a category ID
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        // Insert all 25 products into the database at once
+        DB::table('products')->insert($products);
     }
 }

@@ -1,20 +1,39 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom'; // 👉 ADDED THIS
 import axios from 'axios';
 import useCartStore from '@/Stores/useCartStore';
-import { printReceipt } from '@/Utils/printReceipt';
 import PaymentModal from './PaymentModal';
 import Swal from 'sweetalert2';
 
-export default function CartSidebar({ settings, showPaymentModal, setShowPaymentModal, onClose }) {
+export default function CartSidebar({ settings, showPaymentModal, setShowPaymentModal, onClose, onPrintReceipt }) {
     const { cart, addToCart, removeFromCart, clearCart, toggleSenior, isSenior, getComputations } = useCartStore();
     const [isProcessing, setIsProcessing] = useState(false);
 
-    // NEW: States for Success Modal
+    // States for Success Modal
     const [showSuccessModal, setShowSuccessModal] = useState(false);
-    const [lastReceipt, setLastReceipt] = useState(null);
+    const [lastTransactionId, setLastTransactionId] = useState(null);
 
     const formatPrice = (cents) => `₱${(cents / 100).toFixed(2)}`;
     const { subtotal, discount, total } = getComputations();
+
+    // --- HANDLE INCREASE QUANTITY WITH STOCK CHECK ---
+    const handleIncreaseQty = (item) => {
+        if (item.quantity >= item.stock_quantity) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Limit Reached',
+                text: `Only ${item.stock_quantity} stocks remaining!`,
+                toast: true,
+                position: 'top',
+                showConfirmButton: false,
+                timer: 2000,
+                background: '#FEF2F2',
+                color: '#991B1B'
+            });
+            return;
+        }
+        addToCart(item);
+    };
 
     // --- 1. CLEAR CART ---
     const handleClearCart = async () => {
@@ -93,30 +112,10 @@ export default function CartSidebar({ settings, showPaymentModal, setShowPayment
             });
 
             if (response.data.success) {
-                const receiptData = {
-                    invoice_number: `INV-${response.data.sale_id}`,
-                    cashier_id: "Admin",
-                    items: [...cart],
-                    subtotal: subtotal,
-                    discount: discount,
-                    total: total,
-                    is_senior: isSenior,
-                    payment_method: paymentDetails.method,
-                    cash_given: cashGiven * 100,
-                    change: change * 100,
-                    store_name: settings?.store_name || "My Store",
-                    store_address: settings?.store_address || "",
-                    store_phone: settings?.store_phone || ""
-                };
-
-                // --- MOBILE FIX: Don't print yet. Show Success Screen first. ---
-                setLastReceipt(receiptData);
+                setLastTransactionId(response.data.sale_id);
                 setShowPaymentModal(false);
                 clearCart();
-                setShowSuccessModal(true); // Open Success Modal
-
-                // Try to auto-print for desktop (might be blocked on mobile)
-                // printReceipt(receiptData);
+                setShowSuccessModal(true);
             }
         } catch (error) {
             Swal.fire('Error', error.response?.data?.message || "Transaction failed", 'error');
@@ -128,8 +127,8 @@ export default function CartSidebar({ settings, showPaymentModal, setShowPayment
     // --- 4. HANDLE NEW ORDER ---
     const handleNewOrder = () => {
         setShowSuccessModal(false);
-        setLastReceipt(null);
-        if (onClose) onClose(); // Close mobile cart
+        setLastTransactionId(null);
+        if (onClose) onClose();
     };
 
     return (
@@ -190,7 +189,7 @@ export default function CartSidebar({ settings, showPaymentModal, setShowPayment
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M18 12H6" /></svg>
                                         </button>
                                         <div className="w-8 text-center font-bold text-sm text-gray-800 select-none">{item.quantity}</div>
-                                        <button onClick={() => addToCart(item)} className="w-8 h-full flex items-center justify-center text-gray-500 hover:bg-gray-200 hover:text-green-600 rounded-r-lg transition-colors">
+                                        <button onClick={() => handleIncreaseQty(item)} className="w-8 h-full flex items-center justify-center text-gray-500 hover:bg-gray-200 hover:text-green-600 rounded-r-lg transition-colors">
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                                         </button>
                                     </div>
@@ -219,18 +218,20 @@ export default function CartSidebar({ settings, showPaymentModal, setShowPayment
                 </div>
             </div>
 
-            {showPaymentModal && (
+            {/* 👉 WRAPPED IN A PORTAL */}
+            {showPaymentModal && typeof document !== 'undefined' && createPortal(
                 <PaymentModal
                     total={total / 100}
                     onClose={() => setShowPaymentModal(false)}
                     onConfirm={handleFinalizePayment}
                     isProcessing={isProcessing}
-                />
+                />,
+                document.body
             )}
 
-            {/* --- NEW: TRANSACTION SUCCESS MODAL (Mobile Friendly) --- */}
-            {showSuccessModal && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+            {/* 👉 WRAPPED IN A PORTAL & Z-INDEX INCREASED */}
+           {showSuccessModal && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden text-center p-6 flex flex-col items-center">
 
                         {/* Success Icon */}
@@ -239,12 +240,10 @@ export default function CartSidebar({ settings, showPaymentModal, setShowPayment
                         </div>
 
                         <h2 className="text-2xl font-extrabold text-gray-800 mb-2">Payment Successful!</h2>
-                        <p className="text-gray-500 mb-6">Invoice: <span className="font-mono text-gray-700 font-bold">{lastReceipt?.invoice_number}</span></p>
 
-                        <div className="w-full space-y-3">
-                            {/* PRINT BUTTON - This click is manual, so mobile browsers won't block it */}
+                        <div className="w-full space-y-3 mt-6">
                             <button
-                                onClick={() => printReceipt(lastReceipt)}
+                                onClick={() => onPrintReceipt(lastTransactionId)}
                                 className="w-full py-3.5 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2"
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" /></svg>
@@ -259,7 +258,8 @@ export default function CartSidebar({ settings, showPaymentModal, setShowPayment
                             </button>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </>
     );

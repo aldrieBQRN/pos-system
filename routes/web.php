@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\HeldOrderController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\ShiftController;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB; // 👈 1. ADDED THIS FOR DATABASE ACCESS
 
 /*
 |--------------------------------------------------------------------------
@@ -50,9 +51,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
         return Inertia::render('ShiftHistory');
     })->name('shifts.index');
 
+    // 👉 2. UPDATED POS ROUTE TO PASS SETTINGS
     Route::get('/pos', function () {
-        return Inertia::render('PosTerminal');
+        // Fetch the dynamic settings from the database
+        $settings = DB::table('settings')->pluck('value', 'key');
+
+        return Inertia::render('PosTerminal', [
+            'store_settings' => $settings // Pass it to your React Component
+        ]);
     })->name('pos');
+
     Route::get('/inventory', function () {
         return Inertia::render('Inventory');
     })->name('inventory');
@@ -85,6 +93,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/api/shift/check', [ShiftController::class, 'check']);
     Route::post('/api/shift/start', [ShiftController::class, 'start']);
     Route::post('/api/shift/close', [ShiftController::class, 'close']);
+    Route::get('/api/pos/shift/data/{id}', [ShiftController::class, 'data']);
 
     // POS & Checkout
     Route::post('/api/checkout', [PosController::class, 'checkout']);
@@ -113,6 +122,7 @@ Route::middleware('auth')->group(function () {
 
     // Transaction History
     Route::get('/api/transactions', [TransactionController::class, 'index']);
+    Route::get('/api/transactions/{id}', [TransactionController::class, 'show']);
     Route::post('/api/transactions/{id}/void', [TransactionController::class, 'void']);
 
     // Store Settings

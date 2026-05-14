@@ -2,10 +2,17 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head } from '@inertiajs/react';
-import { printReceipt } from '@/Utils/printReceipt';
 import Swal from 'sweetalert2';
 import ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
+import saveAs from 'file-saver';
+
+// --- PERSISTENT SESSION CACHE ---
+// Remembers the bluetooth printer until the page is refreshed to skip the selection popup
+let cachedBluetoothDevice = null;
+
+// --- HELPER: ENCODE TEXT FOR PRINTER ---
+const encode = (text) => new TextEncoder().encode(text);
+const formatCurrencyPH = (amount) => parseFloat(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function Transactions({ auth }) {
     const [transactions, setTransactions] = useState([]);
@@ -23,6 +30,197 @@ export default function Transactions({ auth }) {
 
     const [showDetails, setShowDetails] = useState(false);
     const [selectedSale, setSelectedSale] = useState(null);
+
+    // ==========================================
+    // PRINTER STATE & LOGIC
+    // ==========================================
+    const [usbDevice, setUsbDevice] = useState(null);
+    const [isMobile, setIsMobile] = useState(/Android|iPhone|iPad/i.test(navigator.userAgent));
+
+    // Auto-Connect Printer on Load (PC Only)
+    useEffect(() => {
+        if (isMobile) return;
+        const autoConnect = async () => {
+            try {
+                const devices = await navigator.usb.getDevices();
+                if (devices.length > 0) {
+                    const device = devices[0];
+                    await device.open();
+                    await device.selectConfiguration(1);
+                    await device.claimInterface(0);
+                    setUsbDevice(device);
+                }
+            } catch (err) {
+                console.log("Auto-connect failed:", err);
+            }
+        };
+        autoConnect();
+    }, [isMobile]);
+
+    // Manual Connect Printer (Button Click)
+    const connectUsb = async () => {
+        if (isMobile) return;
+        try {
+            const device = await navigator.usb.requestDevice({ filters: [] });
+            await device.open();
+            await device.selectConfiguration(1);
+            await device.claimInterface(0);
+            setUsbDevice(device);
+            Swal.fire({ icon: 'success', title: 'Printer Connected', timer: 1500, showConfirmButton: false });
+        } catch (error) {
+            Swal.fire('Connection Failed', error.message, 'error');
+        }
+    };
+
+    const generateReceiptCommands = (trx) => {
+        const padEnd = (str, len) => str.toString().padEnd(len, ' ');
+        const padStart = (str, len) => str.toString().padStart(len, ' ');
+        const separator = "-".repeat(32) + "\n";
+        const fmt = (cents) => (cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 });
+
+        const storeName = settings?.store_name || "Smart POS";
+        const storeAddress = settings?.store_address || "";
+        const storePhone = settings?.store_phone || "";
+
+        const commands = [
+            0x1B, 0x40,       // Init
+            0x1B, 0x70, 0x00, 0x19, 0xFA, // Kick Drawer
+
+            // HEADER
+            0x1B, 0x61, 0x01, // Center
+            0x1B, 0x45, 0x01, // Bold On
+            ...encode(storeName.toUpperCase() + "\n"),
+            0x1B, 0x45, 0x00, // Bold Off
+            ...(storeAddress ? encode(storeAddress + "\n") : []),
+            ...(storePhone ? encode("Tel: " + storePhone + "\n") : []),
+            ...encode(separator),
+
+            // TRX INFO
+            0x1B, 0x61, 0x00, // Left
+            ...encode(padEnd("Invoice:", 10) + (trx.invoice_number || trx.transaction_code) + " (REPRINT)\n"),
+            ...encode(padEnd("Date:", 10) + new Date(trx.created_at).toLocaleString() + "\n"),
+            ...encode(padEnd("Cashier:", 10) + (trx.cashier?.name || 'Unknown') + "\n"),
+            ...encode(separator),
+        ];
+
+        // ITEMS
+        trx.items.forEach(item => {
+            const name = (item.product?.name || 'Item').substring(0, 18);
+            const qtyLine = `${item.quantity} x ${name}`;
+            const lineTotal = fmt(item.quantity * item.unit_price);
+            const line = padEnd(qtyLine, 21) + padStart(lineTotal, 11) + "\n";
+            commands.push(...encode(line));
+        });
+
+        // SENIOR/PWD DISCOUNT CALCULATIONS
+        if (trx.is_senior) {
+            const subtotal = trx.total_amount + (trx.discount || 0);
+            commands.push(
+                ...encode(separator),
+                ...encode(padEnd("Subtotal (VAT Inc):", 20) + padStart(fmt(subtotal), 12) + "\n"),
+                ...encode(padEnd("VAT Exempt Sales:", 20) + padStart(fmt(subtotal / 1.12), 12) + "\n"),
+                ...encode(padEnd("Less: 20% Senior/PWD:", 20) + padStart("-" + fmt(trx.discount || 0), 12) + "\n")
+            );
+        }
+
+        commands.push(...encode(separator));
+
+        // TOTAL
+        commands.push(
+            0x1B, 0x45, 0x01, // Bold On
+            ...encode(padEnd("TOTAL", 15) + padStart("P" + fmt(trx.total_amount), 17) + "\n"),
+            0x1B, 0x45, 0x00  // Bold Off
+        );
+
+        // PAYMENT INFO
+        const finalCashGiven = (trx.cash_given > 0 ? trx.cash_given : trx.total_amount);
+        const finalChange = (trx.cash_given > 0 ? trx.change : 0);
+
+        if (trx.payment_method === 'cash') {
+            commands.push(
+                ...encode(padEnd("Cash Given:", 20) + padStart(fmt(finalCashGiven), 12) + "\n"),
+                ...encode(padEnd("Change:", 20) + padStart(fmt(finalChange), 12) + "\n")
+            );
+        } else {
+            commands.push(
+                ...encode(padEnd("Payment:", 15) + padStart(trx.payment_method.toUpperCase(), 17) + "\n"),
+                ...(trx.payment_reference ? encode(padEnd("Ref:", 10) + trx.payment_reference + "\n") : [])
+            );
+        }
+
+        // FOOTER
+        commands.push(
+            0x0A,
+            0x1B, 0x61, 0x01, // Center
+            ...encode(separator),
+            ...encode("Thank you for your purchase!\n"),
+            ...encode("Please come again.\n"),
+            0x0A, 0x0A, 0x0A, // Feed 3
+            0x1D, 0x56, 0x41  // Cut Paper
+        );
+
+        return new Uint8Array(commands);
+    };
+
+    // --- REPRINT ACTION ---
+    const handleReprint = async (sale) => {
+        const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000 });
+
+        try {
+            Toast.fire({ icon: 'info', title: 'Preparing Reprint...' });
+            const commands = generateReceiptCommands(sale);
+
+            // 👉 MOBILE/TABLET DIRECT BLUETOOTH (Watermark-Free)
+            if (isMobile) {
+                let device = cachedBluetoothDevice;
+
+                if (!device || !device.gatt.connected) {
+                    Toast.fire({ icon: 'info', title: 'Select Bluetooth Printer...' });
+                    device = await navigator.bluetooth.requestDevice({
+                        filters: [{ services: ['000018f0-0000-1000-8000-00805f9b34fb'] }],
+                        optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+                    });
+                    cachedBluetoothDevice = device;
+                }
+
+                if (!device.gatt.connected) {
+                    await device.gatt.connect();
+                }
+
+                const service = await device.gatt.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+                const characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+
+                // Send in chunks (Standard for Bluetooth)
+                const chunkSize = 20;
+                for (let i = 0; i < commands.length; i += chunkSize) {
+                    await characteristic.writeValue(commands.slice(i, i + chunkSize));
+                }
+
+                Toast.fire({ icon: 'success', title: 'Reprinted Successfully!' });
+                return;
+            }
+
+            // 👉 PC USB LOGIC
+            if (!usbDevice) {
+                Swal.fire({
+                    title: 'No Printer Connected',
+                    text: 'Please click the "Connect Printer" button at the top first.',
+                    icon: 'warning',
+                    confirmButtonColor: '#3085d6'
+                });
+                return;
+            }
+
+            const endpoint = usbDevice.configuration.interfaces[0].alternate.endpoints.find(e => e.direction === 'out');
+            await usbDevice.transferOut(endpoint.endpointNumber, commands);
+            Toast.fire({ icon: 'success', title: 'Reprinted Successfully!' });
+
+        } catch (err) {
+            console.error(err);
+            Swal.fire("Print Failed", err.message || "An error occurred while printing.", "error");
+        }
+    };
+    // ==========================================
 
     useEffect(() => {
         fetchTransactions();
@@ -65,25 +263,22 @@ export default function Transactions({ auth }) {
     const exportExcel = async () => {
         setIsExporting(true);
         try {
-            // 1. Fetch ALL data matching current filters
             const params = { all: true };
             if (startDate) params.start_date = startDate;
             if (endDate) params.end_date = endDate;
             if (searchFilter) params.search = searchFilter;
 
             const response = await axios.get('/api/transactions', { params });
-            const allSales = response.data; // Array of sales
+            const allSales = response.data;
 
             if (!allSales || allSales.length === 0) {
                 Swal.fire('No Data', 'No transactions found to export.', 'info');
                 return;
             }
 
-            // 2. Setup Excel Workbook
             const workbook = new ExcelJS.Workbook();
             const worksheet = workbook.addWorksheet('Sales Report');
 
-            // 3. Define Columns
             worksheet.columns = [
                 { header: 'Invoice #', key: 'invoice', width: 15 },
                 { header: 'Date & Time', key: 'date', width: 20 },
@@ -94,16 +289,13 @@ export default function Transactions({ auth }) {
                 { header: 'Total Amount', key: 'total', width: 15 },
             ];
 
-            // 4. Style Header
             const headerRow = worksheet.getRow(1);
             headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
-            headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }; // Blue
+            headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
             headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
             headerRow.height = 25;
 
-            // 5. Add Rows
             allSales.forEach(sale => {
-                // Format Items String
                 const itemsList = sale.items.map(i => `${i.quantity}x ${i.product?.name || 'Item'}`).join(', ');
 
                 const row = worksheet.addRow({
@@ -116,28 +308,22 @@ export default function Transactions({ auth }) {
                     total: sale.total_amount / 100
                 });
 
-                // Style: Red Text if VOID
                 if (sale.status === 'void') {
                     row.font = { color: { argb: 'FFFF0000' } };
                 }
 
-                // Currency Format
                 row.getCell('total').numFmt = '"₱"#,##0.00';
-
-                // Alignment
                 row.getCell('invoice').alignment = { horizontal: 'center' };
                 row.getCell('method').alignment = { horizontal: 'center' };
                 row.getCell('status').alignment = { horizontal: 'center' };
             });
 
-            // 6. Borders
             worksheet.eachRow((row) => {
                 row.eachCell((cell) => {
                     cell.border = { top: { style:'thin' }, left: { style:'thin' }, bottom: { style:'thin' }, right: { style:'thin' } };
                 });
             });
 
-            // 7. Save File
             const buffer = await workbook.xlsx.writeBuffer();
             const filename = `Sales_Report_${startDate || 'All'}_to_${endDate || 'All'}.xlsx`;
             const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -175,37 +361,6 @@ export default function Transactions({ auth }) {
         }
     };
 
-    const handleReprint = (sale) => {
-        let subtotal = sale.total_amount;
-        let discount = 0;
-
-        if (sale.is_senior) {
-            const vatExempt = sale.total_amount / 0.80;
-            discount = vatExempt * 0.20;
-            subtotal = vatExempt * 1.12;
-        }
-
-        const finalCashGiven = sale.cash_given > 0 ? sale.cash_given : sale.total_amount;
-        const finalChange = sale.cash_given > 0 ? sale.change : 0;
-
-        printReceipt({
-            invoice_number: sale.invoice_number,
-            cashier_id: sale.cashier?.name || 'Unknown',
-            store_name: settings?.store_name || "My Store",
-            store_address: settings?.store_address || "",
-            store_phone: settings?.store_phone || "",
-            items: sale.items.map(i => ({ name: i.product?.name || 'Item', quantity: i.quantity, price: i.unit_price })),
-            is_senior: Boolean(sale.is_senior),
-            subtotal: subtotal,
-            discount: discount,
-            total: sale.total_amount,
-            payment_method: sale.payment_method,
-            cash_given: finalCashGiven,
-            change: finalChange,
-            reference: sale.payment_reference
-        });
-    };
-
     const handleViewDetails = (sale) => {
         setSelectedSale(sale);
         setShowDetails(true);
@@ -220,15 +375,15 @@ export default function Transactions({ auth }) {
 
                     {/* Summary Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 relative overflow-hidden">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100">
                             <div className="text-gray-500 text-sm font-medium uppercase">Total Sales</div>
                             <div className="text-3xl font-bold text-blue-600 mt-2">₱{(summary.total_sales / 100).toFixed(2)}</div>
                         </div>
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-purple-100 relative overflow-hidden">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-purple-100">
                             <div className="text-gray-500 text-sm font-medium uppercase">Transactions</div>
                             <div className="text-3xl font-bold text-purple-600 mt-2">{summary.transaction_count}</div>
                         </div>
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-green-100 relative overflow-hidden">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-green-100">
                             <div className="text-gray-500 text-sm font-medium uppercase">Payment Split</div>
                             <div className="mt-2 text-sm space-y-1">
                                 <div className="flex justify-between"><span>Cash:</span> <span className="font-bold text-green-600">₱{(summary.cash_sales / 100).toFixed(2)}</span></div>
@@ -238,53 +393,53 @@ export default function Transactions({ auth }) {
                     </div>
 
                     {/* Responsive Toolbar */}
-                    <div className="flex flex-col lg:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                        <div className="flex flex-col sm:flex-row gap-4 w-full">
+                    <div className="flex flex-col xl:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                        <div className="flex flex-col md:flex-row gap-4 w-full xl:flex-1">
                             <div className="relative flex-1">
                                 <input
                                     type="text"
                                     placeholder="Search Invoice or Cashier..."
-                                    className="pl-10 pr-4 py-2 border rounded-lg focus:ring-blue-500 focus:border-blue-500 w-full"
+                                    className="pl-10 pr-4 py-2 border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 w-full"
                                     value={searchFilter}
                                     onChange={(e) => setSearchFilter(e.target.value)}
                                 />
-                                <svg className="w-5 h-5 text-gray-400 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                             </div>
-                            <div className="flex gap-2 items-center w-full sm:w-auto">
-                                <input type="date" className="border rounded-lg px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 w-1/2 sm:w-auto" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                            <div className="flex gap-2 items-center w-full md:w-auto">
+                                <input type="date" className="border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 text-gray-600 w-1/2 md:w-40" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                                 <span className="text-gray-400">-</span>
-                                <input type="date" className="border rounded-lg px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 w-1/2 sm:w-auto" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                                <input type="date" className="border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 text-gray-600 w-1/2 md:w-40" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
                             </div>
                         </div>
 
-                        <button
-                            onClick={exportExcel}
-                            disabled={isExporting}
-                            className={`w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 flex items-center justify-center gap-2 shadow-sm whitespace-nowrap transition-all ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                            {isExporting ? (
-                                <>
-                                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        <div className="flex flex-col sm:flex-row w-full xl:w-auto gap-2 shrink-0">
+                            {/* PRINTER CONNECT BUTTON */}
+                            {!isMobile && (
+                                <button
+                                    onClick={connectUsb}
+                                    className={`w-full sm:w-auto px-4 py-2.5 rounded-lg font-bold flex items-center justify-center gap-2 shadow-sm transition-all border
+                                        ${usbDevice ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-600 border-red-200 animate-pulse'}`}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" />
                                     </svg>
-                                    Exporting...
-                                </>
-                            ) : (
-                                <>
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                    </svg>
-                                    Export Excel
-                                </>
+                                    {usbDevice ? 'USB Connected' : 'Connect USB Printer'}
+                                </button>
                             )}
-                        </button>
+                            {isMobile && <div className="text-xs text-blue-600 font-bold bg-blue-50 px-3 py-2.5 rounded-lg border border-blue-100 flex items-center justify-center">Bluetooth Print Mode Active</div>}
+
+                            <button
+                                onClick={exportExcel}
+                                disabled={isExporting}
+                                className={`w-full sm:w-auto bg-green-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-green-700 flex items-center justify-center gap-2 shadow-sm transition-all ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            >
+                                {isExporting ? 'Exporting...' : 'Export Excel'}
+                            </button>
+                        </div>
                     </div>
 
-                    {/* --- RESPONSIVE DATA DISPLAY --- */}
-
-                    {/* OPTION A: DESKTOP TABLE (Hidden on Mobile) */}
-                    <div className="hidden md:block bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
+                    {/* DESKTOP TABLE */}
+                    <div className="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
                                 <thead className="bg-gray-50 border-b text-gray-600 uppercase text-xs">
@@ -310,11 +465,9 @@ export default function Transactions({ auth }) {
                                                         {sale.invoice_number}
                                                     </div>
                                                     <div className="mt-1">
-                                                        {sale.status === 'void' ? (
-                                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 uppercase tracking-wide">VOIDED</span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 uppercase tracking-wide">COMPLETED</span>
-                                                        )}
+                                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${sale.status === 'void' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                                            {sale.status === 'void' ? 'VOIDED' : 'COMPLETED'}
+                                                        </span>
                                                     </div>
                                                 </td>
                                                 <td className={`p-4 text-sm ${sale.status === 'void' ? 'text-red-400' : 'text-gray-500'}`}>{new Date(sale.created_at).toLocaleString()}</td>
@@ -347,7 +500,7 @@ export default function Transactions({ auth }) {
                         </div>
                     </div>
 
-                    {/* OPTION B: MOBILE CARD VIEW (Hidden on Desktop) */}
+                    {/* MOBILE CARD VIEW */}
                     <div className="md:hidden space-y-4">
                         {transactions.map((sale) => (
                             <div key={sale.id} className={`bg-white p-4 rounded-xl shadow-sm border ${sale.status === 'void' ? 'border-red-200 bg-red-50' : 'border-gray-100'} flex flex-col gap-3`}>
@@ -358,11 +511,9 @@ export default function Transactions({ auth }) {
                                         </div>
                                         <div className="text-xs text-gray-500">{new Date(sale.created_at).toLocaleString()}</div>
                                     </div>
-                                    {sale.status === 'void' ? (
-                                        <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold uppercase">VOID</span>
-                                    ) : (
-                                        <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold uppercase">COMPLETED</span>
-                                    )}
+                                    <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${sale.status === 'void' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                        {sale.status === 'void' ? 'VOID' : 'COMPLETED'}
+                                    </span>
                                 </div>
 
                                 <div className="flex justify-between items-center text-sm border-t border-b py-2 border-gray-100">
@@ -380,19 +531,12 @@ export default function Transactions({ auth }) {
                                     <span className="font-bold text-xl text-gray-800">₱{(sale.total_amount / 100).toFixed(2)}</span>
                                 </div>
 
-                                {/* Mobile Action Buttons */}
                                 <div className="grid grid-cols-3 gap-2 pt-2">
-                                    <button onClick={() => handleViewDetails(sale)} className="py-2 text-sm font-medium text-gray-600 bg-gray-50 rounded hover:bg-gray-100 text-center flex items-center justify-center gap-1">
-                                        View
-                                    </button>
+                                    <button onClick={() => handleViewDetails(sale)} className="py-2 text-sm font-medium text-gray-600 bg-gray-50 rounded text-center">View</button>
                                     {sale.status !== 'void' && (
                                         <>
-                                            <button onClick={() => handleReprint(sale)} className="py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded hover:bg-blue-100 text-center flex items-center justify-center gap-1">
-                                                Reprint
-                                            </button>
-                                            <button onClick={() => handleVoid(sale)} className="py-2 text-sm font-medium text-red-600 bg-red-50 rounded hover:bg-red-100 text-center flex items-center justify-center gap-1">
-                                                Void
-                                            </button>
+                                            <button onClick={() => handleReprint(sale)} className="py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded text-center">Reprint</button>
+                                            <button onClick={() => handleVoid(sale)} className="py-2 text-sm font-medium text-red-600 bg-red-50 rounded text-center">Void</button>
                                         </>
                                     )}
                                 </div>
@@ -412,11 +556,10 @@ export default function Transactions({ auth }) {
                 </div>
             </div>
 
-            {/* DETAILS MODAL - RESPONSIVE */}
+            {/* DETAILS MODAL */}
             {showDetails && selectedSale && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-fade-in p-4">
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
                     <div className="bg-white w-full max-w-lg rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                        {/* Header */}
                         <div className="bg-gray-50 px-6 py-4 border-b flex justify-between items-center shrink-0">
                             <div>
                                 <h3 className="text-lg font-bold text-gray-800">Transaction Details</h3>
@@ -425,7 +568,6 @@ export default function Transactions({ auth }) {
                             <button onClick={() => setShowDetails(false)} className="text-gray-400 hover:text-red-500 text-2xl">&times;</button>
                         </div>
 
-                        {/* Scrollable Items */}
                         <div className="p-6 overflow-y-auto">
                             <table className="w-full text-sm">
                                 <thead className="text-gray-500 border-b">
@@ -446,7 +588,6 @@ export default function Transactions({ auth }) {
                             </table>
                         </div>
 
-                        {/* Footer (Fixed at bottom) */}
                         <div className="bg-gray-50 px-6 py-3 border-t text-sm border-gray-200 shrink-0">
                             <div className="flex justify-between mb-1">
                                 <span className="text-gray-500">Payment Method:</span>

@@ -8,7 +8,7 @@ import CategoryManager from '@/Components/CategoryManager';
 import Swal from 'sweetalert2';
 import { printLabels } from '@/Utils/printLabels';
 import ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
+import saveAs from 'file-saver';
 
 export default function Inventory({ auth }) {
     const [products, setProducts] = useState([]);
@@ -289,10 +289,10 @@ export default function Inventory({ auth }) {
                     {/* TOOLBAR: Responsive Stack */}
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row gap-4 items-center">
                         <div className="relative flex-1 w-full">
-                            <input type="text" placeholder="Search product..." className="pl-10 pr-4 py-2 border rounded-lg w-full focus:ring-blue-500 focus:border-blue-500" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                            <input type="text" placeholder="Search product..." className="pl-10 pr-4 py-2 border-gray-300 rounded-lg w-full focus:ring-blue-500 focus:border-blue-500" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                             <svg className="w-5 h-5 text-gray-400 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                         </div>
-                        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="border rounded-lg py-2 pl-3 pr-10 w-full sm:w-48 focus:ring-blue-500 focus:border-blue-500">
+                        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="border-gray-300 rounded-lg py-2 pl-3 pr-10 w-full sm:w-48 focus:ring-blue-500 focus:border-blue-500 text-gray-600">
                             <option value="">All Categories</option>
                             {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>

@@ -13,12 +13,13 @@ class Sale extends Model
         'invoice_number',
         'cashier_id',
         'total_amount',
-        'cash_given',
-        'change',
         'payment_method',
         'payment_reference',
         'is_senior',
+        'cash_given',
+        'change',
         'status',
+        'transaction_date',
     ];
 
     protected $casts = [

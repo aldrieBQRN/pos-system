@@ -64,6 +64,13 @@ class TransactionController extends Controller
         ]);
     }
 
+    // Put this right below your index() function
+    public function show($id)
+    {
+        $sale = Sale::with(['items.product', 'cashier'])->findOrFail($id);
+        return response()->json($sale);
+    }
+
     // ... (Keep the void function as is) ...
     public function void($id)
     {

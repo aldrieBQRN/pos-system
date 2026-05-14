@@ -18,7 +18,7 @@ class PosController extends Controller
         $request->validate([
             'cart' => 'required|array|min:1',
             'cart.*.id' => 'required|exists:products,id',
-            'cart.*.quantity' => 'required|integer|min:1', 
+            'cart.*.quantity' => 'required|integer|min:1',
             'payment_method' => 'required|string',
             // Allow cash_given and change to be nullable/numeric
             'cash_given' => 'nullable|numeric',
@@ -38,14 +38,16 @@ class PosController extends Controller
             $sale = Sale::create([
                 'invoice_number' => 'INV-' . strtoupper(uniqid()),
                 'cashier_id' => Auth::id(), // Uses the logged-in user
-                'total_amount' => 0, 
+                'total_amount' => 0,
                 'payment_method' => $request->payment_method,
                 'payment_reference' => $request->reference ?? null,
                 'is_senior' => $request->is_senior ?? false,
-                
+
                 // NEW: Store Cash/Change info
                 'cash_given' => $cashGiven,
                 'change' => $change,
+
+                'transaction_date' => now(),
             ]);
 
             $calculatedTotal = 0;
@@ -97,7 +99,6 @@ class PosController extends Controller
                 'sale_id' => $sale->id,
                 'message' => 'Transaction successful!'
             ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([

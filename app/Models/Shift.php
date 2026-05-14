@@ -21,7 +21,14 @@ class Shift extends Model
         'status'
     ];
 
-    // --- THIS IS REQUIRED TO SHOW NAMES ---
+    protected $casts = [
+        'start_time' => 'datetime',
+        'end_time'   => 'datetime',
+    ];
+
+    /**
+     * Get the cashier associated with this shift.
+     */
     public function user()
     {
         return $this->belongsTo(User::class);

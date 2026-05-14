@@ -13,44 +13,53 @@ class SalesSeeder extends Seeder
 {
     public function run(): void
     {
-        // 1. Get available products and a cashier
         $products = Product::all();
-        $cashier = User::first(); // Grab the first user as the cashier
+        $users = User::all(); // Fetch all users to distribute sales
 
         if ($products->count() === 0) {
             $this->command->info('No products found! Run ProductSeeder first.');
             return;
         }
 
-        if (!$cashier) {
+        if ($users->count() === 0) {
             $this->command->info('No users found! Run DatabaseSeeder first.');
             return;
         }
 
-        // 2. Create 50 Fake Transactions
-        for ($i = 0; $i < 50; $i++) {
-            // Random date in the last 7 days (spread out time)
-            $date = Carbon::today()->subDays(rand(0, 6))->setTime(rand(8, 20), rand(0, 59));
+        // Create 100 Fake Transactions to populate the charts
+        for ($i = 0; $i < 100; $i++) {
+            // Random date in the last 7 days
+            $date = Carbon::today()->subDays(rand(0, 7))->setTime(rand(8, 22), rand(0, 59));
 
+            // Randomly assign the sale to either Admin or Cashier
+            $cashier = $users->random();
+
+            // Create the Sale Ticket
             // Create the Sale Ticket
             $sale = Sale::create([
                 'invoice_number' => 'INV-' . strtoupper(uniqid()),
                 'cashier_id' => $cashier->id,
-                'total_amount' => 0, // Calculated below
-                'payment_method' => rand(0, 1) ? 'cash' : 'gcash',
-                'payment_reference' => rand(0, 1) ? 'REF-' . rand(1000, 9999) : null,
+                'total_amount' => 0,
+                'payment_method' => rand(1, 10) > 2 ? 'cash' : 'gcash',
+                'payment_reference' => null,
+                'transaction_date' => $date, // <--- ADD THIS LINE
                 'created_at' => $date,
                 'updated_at' => $date,
             ]);
 
-            // Add 1-4 Random Items to this Sale
+            // If GCash, generate a reference number
+            if ($sale->payment_method === 'gcash') {
+                $sale->update(['payment_reference' => 'REF-' . rand(100000, 999999)]);
+            }
+
+            // Add 1-5 Random Items to this Sale
             $total = 0;
-            $itemsCount = rand(1, 4);
+            $itemsCount = rand(1, 5);
 
             for ($j = 0; $j < $itemsCount; $j++) {
                 $product = $products->random();
-                $quantity = rand(1, 3);
-                $price = $product->price; // Price is in cents (e.g., 250)
+                $quantity = rand(1, 4);
+                $price = $product->price;
 
                 SaleItem::create([
                     'sale_id' => $sale->id,
@@ -58,12 +67,12 @@ class SalesSeeder extends Seeder
                     'quantity' => $quantity,
                     'unit_price' => $price,
                     'subtotal' => $price * $quantity,
-                    'created_at' => $date, // Important for "Today's Sales" chart
+                    'created_at' => $date,
                     'updated_at' => $date,
                 ]);
 
                 $total += ($price * $quantity);
-                
+
                 // Simulate stock reduction
                 if ($product->stock_quantity > $quantity) {
                     $product->decrement('stock_quantity', $quantity);
